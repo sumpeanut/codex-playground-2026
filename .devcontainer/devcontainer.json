@@ -1,0 +1,25 @@
+{
+    "name": "npm-workspace",
+    "dockerComposeFile": "../docker-compose.yml",
+    "service": "npm-workspace",
+    "workspaceFolder": "/usr/src/app",
+    "shutdownAction": "stopCompose",
+    "customizations": {
+        "vscode": {
+            "settings": {
+              "terminal.integrated.enableShellIntegration": true,
+              "terminal.integrated.defaultProfile.linux"  : "sh",
+              "github.copilot.nextEditSuggestions.enabled": true,
+              "editor.inlineSuggest.enabled": true,
+              "github.copilot.enable": {
+                "*": true,
+                "plaintext": false,
+                "markdown": false,
+                "scminput": false
+              }
+              
+
+            }
+        }
+    }
+  }

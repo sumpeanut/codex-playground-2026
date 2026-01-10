@@ -1,0 +1,7 @@
+services:
+  npm-workspace:
+    container_name: npm-workspace
+    build: .
+    volumes:
+      - "./:/usr/src/app"
+    network_mode: host      

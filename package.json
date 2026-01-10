@@ -1,0 +1,15 @@
+{
+  "name": "ca_structure",
+  "version": "1.0.0",
+  "type": "module",
+  "description": "A cellular automaton structure simulator",
+  "scripts": {
+    "start": "serve -l 3000 public"
+  },
+  "dependencies": {
+    "serve": "^14.2.4"
+  },
+  "devDependencies": {
+    
+  }
+}
