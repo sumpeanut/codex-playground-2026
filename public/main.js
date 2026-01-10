@@ -1,4 +1,5 @@
 const canvas = document.getElementById("c");
+const overlay = document.getElementById("overlay");
 
 const ui = {
   radius: document.getElementById("radius"),
@@ -10,6 +11,7 @@ const ui = {
   bondWeakenVal: document.getElementById("bondWeakenVal"),
   relaxItersVal: document.getElementById("relaxItersVal"),
   reset: document.getElementById("reset"),
+  showQuadTree: document.getElementById("showQuadTree"),
 };
 
 function syncUI() {
@@ -36,11 +38,14 @@ function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
   canvas.width = Math.max(1, Math.floor(rect.width * dpr));
   canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  overlay.width = canvas.width;
+  overlay.height = canvas.height;
 }
 window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
 const state = { mx: 0, my: 0, mdown: 0, repair: 0, frame: 0 };
+const overlayCtx = overlay.getContext("2d");
 
 canvas.addEventListener("pointerdown", (e) => {
   canvas.setPointerCapture(e.pointerId);
@@ -76,6 +81,7 @@ async function init() {
 
   const cellCount = GRID_W * GRID_H;
   const cellsBytes = cellCount * 4;
+  const cpuCells = new Uint32Array(cellCount);
 
   const bondsHCount = (GRID_W - 1) * GRID_H;
   const bondsVCount = GRID_W * (GRID_H - 1);
@@ -210,6 +216,7 @@ async function init() {
 
     device.queue.writeBuffer(cellsA, 0, cells);
     device.queue.writeBuffer(cellsB, 0, cells);
+    cpuCells.set(cells);
 
     const h = new Uint32Array(bondsHCount);
     const v = new Uint32Array(bondsVCount);
@@ -221,6 +228,124 @@ async function init() {
 
   ui.reset.addEventListener("click", resetWorld);
   resetWorld();
+
+  // ---- Conceptual QuadTree (CPU-side scaffold for future GPU-driven culling) ----
+  const quadState = { root: null, lastBuiltFrame: -1 };
+
+  function getSolid(cell) {
+    const dmg = cell & 0xff;
+    const solidBit = (cell >> 8) & 1;
+    return solidBit === 1 && dmg < 255;
+  }
+
+  function packCell(solid, dmg) {
+    const s = solid ? 1 : 0;
+    return (dmg & 0xff) | (s << 8);
+  }
+
+  function applyBrushToCpu() {
+    if (!state.mdown) return;
+    const radius = Number(ui.radius.value);
+    const damage = Number(ui.damage.value);
+    const mx = state.mx;
+    const my = state.my;
+    const r2 = radius * radius;
+
+    const x0 = Math.max(0, mx - radius);
+    const x1 = Math.min(GRID_W - 1, mx + radius);
+    const y0 = Math.max(0, my - radius);
+    const y1 = Math.min(GRID_H - 1, my + radius);
+
+    for (let y = y0; y <= y1; y++) {
+      const dy = y - my;
+      for (let x = x0; x <= x1; x++) {
+        const dx = x - mx;
+        if (dx * dx + dy * dy > r2) continue;
+        const idx = y * GRID_W + x;
+        const cell = cpuCells[idx];
+        const dmg = cell & 0xff;
+        if (state.repair) {
+          const nd = Math.max(0, dmg - damage);
+          cpuCells[idx] = packCell(true, nd);
+        } else {
+          const nd = Math.min(255, dmg + damage);
+          cpuCells[idx] = packCell(nd < 255, nd);
+        }
+      }
+    }
+  }
+
+  function buildQuadTree(x, y, w, h, maxDepth, depth = 0) {
+    let allSolid = true;
+    let allEmpty = true;
+
+    for (let yy = y; yy < y + h; yy++) {
+      if (yy < 0 || yy >= GRID_H) {
+        allSolid = false;
+        continue;
+      }
+      const row = yy * GRID_W;
+      for (let xx = x; xx < x + w; xx++) {
+        if (xx < 0 || xx >= GRID_W) {
+          allSolid = false;
+          continue;
+        }
+        const solid = getSolid(cpuCells[row + xx]);
+        if (solid) {
+          allEmpty = false;
+        } else {
+          allSolid = false;
+        }
+        if (!allSolid && !allEmpty) break;
+      }
+      if (!allSolid && !allEmpty) break;
+    }
+
+    const uniform = allSolid || allEmpty;
+    if (uniform || depth >= maxDepth || (w <= 4 && h <= 4)) {
+      return { x, y, w, h, state: allSolid ? "solid" : "empty", children: null };
+    }
+
+    const hw = Math.ceil(w / 2);
+    const hh = Math.ceil(h / 2);
+    return {
+      x,
+      y,
+      w,
+      h,
+      state: "mixed",
+      children: [
+        buildQuadTree(x, y, hw, hh, maxDepth, depth + 1),
+        buildQuadTree(x + hw, y, w - hw, hh, maxDepth, depth + 1),
+        buildQuadTree(x, y + hh, hw, h - hh, maxDepth, depth + 1),
+        buildQuadTree(x + hw, y + hh, w - hw, h - hh, maxDepth, depth + 1),
+      ],
+    };
+  }
+
+  function rebuildQuadTree() {
+    const maxDepth = 6;
+    quadState.root = buildQuadTree(0, 0, GRID_W, GRID_H, maxDepth);
+    quadState.lastBuiltFrame = state.frame;
+  }
+
+  function drawQuadTree(node) {
+    if (!node) return;
+    if (node.children) {
+      node.children.forEach(drawQuadTree);
+      return;
+    }
+    if (node.state === "empty") return;
+    const scaleX = overlay.width / GRID_W;
+    const scaleY = overlay.height / GRID_H;
+    overlayCtx.strokeStyle = node.state === "solid" ? "rgba(120, 200, 255, 0.5)" : "rgba(255, 200, 120, 0.5)";
+    overlayCtx.strokeRect(
+      node.x * scaleX + 0.5,
+      node.y * scaleY + 0.5,
+      node.w * scaleX,
+      node.h * scaleY
+    );
+  }
 
   function writeParams() {
     const p = new Uint32Array(paramsU32);
@@ -250,6 +375,10 @@ async function init() {
 
   function frame() {
     state.frame++;
+    applyBrushToCpu();
+    if (ui.showQuadTree.checked && state.frame - quadState.lastBuiltFrame > 6) {
+      rebuildQuadTree();
+    }
     writeParams();
 
     const encoder = device.createCommandEncoder();
@@ -295,6 +424,10 @@ async function init() {
     rpass.end();
 
     device.queue.submit([encoder.finish()]);
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    if (ui.showQuadTree.checked) {
+      drawQuadTree(quadState.root);
+    }
     requestAnimationFrame(frame);
   }
 

@@ -8,6 +8,7 @@
       html, body { margin: 0; height: 100%; background: #111; color: #ddd; font-family: system-ui, sans-serif; }
       #ui { position: fixed; left: 12px; top: 12px; background: rgba(0,0,0,.55); padding: 10px 12px; border-radius: 10px; }
       canvas { width: 100vw; height: 100vh; display: block; image-rendering: pixelated; }
+      #overlay { position: fixed; inset: 0; pointer-events: none; }
       .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
       input[type="range"] { width: 220px; }
       button { cursor: pointer; }
@@ -48,6 +49,10 @@
         <span>Hold <kbd>Shift</kbd> to repair</span>
       </div>
 
+      <div class="row">
+        <label><input id="showQuadTree" type="checkbox" /> Show QuadTree overlay</label>
+      </div>
+
       <div class="small">
         Left-drag: damage cells + weaken nearby bonds.<br/>
         Shift+drag: repair cells + strengthen bonds.<br/>
@@ -56,6 +61,7 @@
     </div>
 
     <canvas id="c"></canvas>
+    <canvas id="overlay"></canvas>
     <script type="module" src="./main.js"></script>
   </body>
 </html>
