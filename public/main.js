@@ -230,7 +230,11 @@ async function init() {
   resetWorld();
 
   // ---- Conceptual QuadTree (CPU-side scaffold for future GPU-driven culling) ----
-  const quadState = { root: null, lastBuiltFrame: -1 };
+  const quadState = { root: null, lastBuiltFrame: -1, readbackInFlight: false };
+  const readbackBuffer = device.createBuffer({
+    size: cellsBytes,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
 
   function getSolid(cell) {
     const dmg = cell & 0xff;
@@ -238,41 +242,18 @@ async function init() {
     return solidBit === 1 && dmg < 255;
   }
 
-  function packCell(solid, dmg) {
-    const s = solid ? 1 : 0;
-    return (dmg & 0xff) | (s << 8);
-  }
-
-  function applyBrushToCpu() {
-    if (!state.mdown) return;
-    const radius = Number(ui.radius.value);
-    const damage = Number(ui.damage.value);
-    const mx = state.mx;
-    const my = state.my;
-    const r2 = radius * radius;
-
-    const x0 = Math.max(0, mx - radius);
-    const x1 = Math.min(GRID_W - 1, mx + radius);
-    const y0 = Math.max(0, my - radius);
-    const y1 = Math.min(GRID_H - 1, my + radius);
-
-    for (let y = y0; y <= y1; y++) {
-      const dy = y - my;
-      for (let x = x0; x <= x1; x++) {
-        const dx = x - mx;
-        if (dx * dx + dy * dy > r2) continue;
-        const idx = y * GRID_W + x;
-        const cell = cpuCells[idx];
-        const dmg = cell & 0xff;
-        if (state.repair) {
-          const nd = Math.max(0, dmg - damage);
-          cpuCells[idx] = packCell(true, nd);
-        } else {
-          const nd = Math.min(255, dmg + damage);
-          cpuCells[idx] = packCell(nd < 255, nd);
-        }
-      }
-    }
+  async function requestGpuReadback() {
+    if (quadState.readbackInFlight) return;
+    quadState.readbackInFlight = true;
+    const encoder = device.createCommandEncoder();
+    encoder.copyBufferToBuffer(cellsA, 0, readbackBuffer, 0, cellsBytes);
+    device.queue.submit([encoder.finish()]);
+    await device.queue.onSubmittedWorkDone();
+    await readbackBuffer.mapAsync(GPUMapMode.READ);
+    cpuCells.set(new Uint32Array(readbackBuffer.getMappedRange()));
+    readbackBuffer.unmap();
+    quadState.readbackInFlight = false;
+    rebuildQuadTree();
   }
 
   function buildQuadTree(x, y, w, h, maxDepth, depth = 0) {
@@ -375,9 +356,8 @@ async function init() {
 
   function frame() {
     state.frame++;
-    applyBrushToCpu();
-    if (ui.showQuadTree.checked && state.frame - quadState.lastBuiltFrame > 6) {
-      rebuildQuadTree();
+    if (ui.showQuadTree.checked && state.frame - quadState.lastBuiltFrame > 10) {
+      requestGpuReadback();
     }
     writeParams();
 
