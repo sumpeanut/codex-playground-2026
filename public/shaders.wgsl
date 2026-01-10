@@ -67,6 +67,7 @@ fn bondV(x: u32, y: u32) -> u32 { // between (x,y) and (x,y+1)
 }
 
 fn emptyAtA(x: u32, y: u32) -> bool { return !getSolid(cellsA[idx(x,y)]); }
+fn solidAtA(x: u32, y: u32) -> bool { return getSolid(cellsA[idx(x,y)]); }
 
 // -------------------- Tunables --------------------
 const COHESION_TH: u32 = 180u; // bonds >= this are "strong welds"
@@ -96,6 +97,38 @@ fn cohesion_ok_for_fall(x: u32, y: u32) -> bool {
 fn support_allows_fall(x: u32, y: u32) -> bool {
   if (y + 1u >= params.h) { return false; }
   return bondV(x, y) < SUPPORT_TH;
+}
+
+fn chunk_is_strong(x: u32, y: u32) -> bool {
+  if (x + 1u >= params.w || y + 1u >= params.h) { return false; }
+  if (!solidAtA(x, y) || !solidAtA(x + 1u, y) || !solidAtA(x, y + 1u) || !solidAtA(x + 1u, y + 1u)) {
+    return false;
+  }
+  if (bondH(x, y) < COHESION_TH || bondH(x, y + 1u) < COHESION_TH) { return false; }
+  if (bondV(x, y) < COHESION_TH || bondV(x + 1u, y) < COHESION_TH) { return false; }
+  return true;
+}
+
+fn chunk_blocked_by_side_bonds(x: u32, y: u32) -> bool {
+  // If the chunk is strongly bonded to side neighbors, don't allow it to shear away.
+  if (x > 0u) {
+    if (bondH(x - 1u, y) >= COHESION_TH && solidAtA(x - 1u, y)) { return true; }
+    if (bondH(x - 1u, y + 1u) >= COHESION_TH && solidAtA(x - 1u, y + 1u)) { return true; }
+  }
+  if (x + 2u < params.w) {
+    if (bondH(x + 1u, y) >= COHESION_TH && solidAtA(x + 2u, y)) { return true; }
+    if (bondH(x + 1u, y + 1u) >= COHESION_TH && solidAtA(x + 2u, y + 1u)) { return true; }
+  }
+  return false;
+}
+
+fn chunk_can_fall(x: u32, y: u32) -> bool {
+  if (!chunk_is_strong(x, y)) { return false; }
+  if (y + 2u >= params.h) { return false; }
+  if (!emptyAtA(x, y + 2u) || !emptyAtA(x + 1u, y + 2u)) { return false; }
+  if (!support_allows_fall(x, y + 1u) || !support_allows_fall(x + 1u, y + 1u)) { return false; }
+  if (chunk_blocked_by_side_bonds(x, y)) { return false; }
+  return true;
 }
 
 // -------------------- Pass 1: Brush damage/repair --------------------
@@ -211,13 +244,44 @@ fn step(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = idx(x, y);
   let c = cellsA[i];
 
-  // Default copy
-  cellsB[i] = c;
+  let ax = x & 0xFFFFFFFEu;
+  let ay = y & 0xFFFFFFFEu;
+  let strongChunk = chunk_is_strong(ax, ay);
+  var tl = 0u;
+  var tr = 0u;
+  var bl = 0u;
+  var br = 0u;
+  if (strongChunk) {
+    if (x != ax || y != ay) { return; }
+    tl = cellsA[idx(ax, ay)];
+    tr = cellsA[idx(ax + 1u, ay)];
+    bl = cellsA[idx(ax, ay + 1u)];
+    br = cellsA[idx(ax + 1u, ay + 1u)];
+    cellsB[idx(ax, ay)] = tl;
+    cellsB[idx(ax + 1u, ay)] = tr;
+    cellsB[idx(ax, ay + 1u)] = bl;
+    cellsB[idx(ax + 1u, ay + 1u)] = br;
+  } else {
+    // Default copy
+    cellsB[i] = c;
+  }
 
   if (!getSolid(c)) { return; }
 
   // Checkerboard to reduce write conflicts
   if (((x + y + (params.frame & 1u)) & 1u) != 0u) {
+    return;
+  }
+
+  if (strongChunk) {
+    if (chunk_can_fall(ax, ay)) {
+      cellsB[idx(ax, ay)] = 0u;
+      cellsB[idx(ax + 1u, ay)] = 0u;
+      cellsB[idx(ax, ay + 1u)] = tl;
+      cellsB[idx(ax + 1u, ay + 1u)] = tr;
+      cellsB[idx(ax, ay + 2u)] = bl;
+      cellsB[idx(ax + 1u, ay + 2u)] = br;
+    }
     return;
   }
 
@@ -275,8 +339,27 @@ fn relax(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = idx(x, y);
   let c = cellsA[i];
 
-  // Default copy
-  cellsB[i] = c;
+  let ax = x & 0xFFFFFFFEu;
+  let ay = y & 0xFFFFFFFEu;
+  let strongChunk = chunk_is_strong(ax, ay);
+  var tl = 0u;
+  var tr = 0u;
+  var bl = 0u;
+  var br = 0u;
+  if (strongChunk) {
+    if (x != ax || y != ay) { return; }
+    tl = cellsA[idx(ax, ay)];
+    tr = cellsA[idx(ax + 1u, ay)];
+    bl = cellsA[idx(ax, ay + 1u)];
+    br = cellsA[idx(ax + 1u, ay + 1u)];
+    cellsB[idx(ax, ay)] = tl;
+    cellsB[idx(ax + 1u, ay)] = tr;
+    cellsB[idx(ax, ay + 1u)] = bl;
+    cellsB[idx(ax + 1u, ay + 1u)] = br;
+  } else {
+    // Default copy
+    cellsB[i] = c;
+  }
 
   if (!getSolid(c)) { return; }
 
@@ -284,6 +367,18 @@ fn relax(@builtin(global_invocation_id) gid: vec3<u32>) {
   // This reduces oscillation when multiple relax iters run.
   let phase = (params.frame >> 1u) & 1u;
   if (((x + y + phase) & 1u) != 0u) { return; }
+
+  if (strongChunk) {
+    if (chunk_can_fall(ax, ay)) {
+      cellsB[idx(ax, ay)] = 0u;
+      cellsB[idx(ax + 1u, ay)] = 0u;
+      cellsB[idx(ax, ay + 1u)] = tl;
+      cellsB[idx(ax + 1u, ay + 1u)] = tr;
+      cellsB[idx(ax, ay + 2u)] = bl;
+      cellsB[idx(ax + 1u, ay + 2u)] = br;
+    }
+    return;
+  }
 
   // Prefer settling straight down if possible
   if (y + 1u < params.h) {
