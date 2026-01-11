@@ -261,8 +261,9 @@ async function init() {
   function resetWorld() {
     const cells = new Uint32Array(cellCount);
 
-    function setSolid(x, y, dmg = 0) {
-      cells[y * GRID_W + x] = (dmg & 0xff) | (1 << 8);
+    function setSolid(x, y, dmg = 0, passable = false) {
+      const p = passable ? (1 << 9) : 0;
+      cells[y * GRID_W + x] = (dmg & 0xff) | (1 << 8) | p;
     }
 
     // Ground slab
@@ -308,6 +309,21 @@ async function init() {
     const dmg = cell & 0xff;
     const solidBit = (cell >> 8) & 1;
     return solidBit === 1 && dmg < 255;
+  }
+
+  // Check if entity can pass through this cell (support cells are solid but passable)
+  function getPassable(cell) {
+    return ((cell >> 9) & 1) === 1;
+  }
+
+  // Check if cell is a "support" cell (solid but entities can pass through)
+  function isSupport(cell) {
+    return getSolid(cell) && getPassable(cell);
+  }
+
+  // Check if cell blocks entity movement (solid and NOT passable)
+  function blocksEntity(cell) {
+    return getSolid(cell) && !getPassable(cell);
   }
 
   async function requestGpuReadback() {
@@ -397,11 +413,13 @@ async function init() {
   }
 
   // ---- Walkable Surface Detection ----
-  // A cell is walkable if it's empty AND has a solid cell directly below it
+  // A cell is walkable if it's empty (or a support cell) AND has a solid cell directly below it
   function isWalkable(x, y) {
     if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
     const cell = cpuCells[y * GRID_W + x];
-    if (getSolid(cell)) return false; // Can't walk inside solid
+    // Can't walk inside solid cells that block entities
+    // Support cells (solid but passable) are treated as empty for entities
+    if (blocksEntity(cell)) return false;
     // Check if there's solid ground below
     if (y + 1 >= GRID_H) return true; // Bottom edge is walkable
     const below = cpuCells[(y + 1) * GRID_W + x];
@@ -410,6 +428,7 @@ async function init() {
 
   // Check if the path is clear (no solid cells blocking the jump arc)
   // For falling (dy > 0), we need to skip checking the ground cell directly below start
+  // Support cells (passable) do not block entity movement
   function isJumpPathClear(x1, y1, x2, y2) {
     const dx = x2 - x1;
     const dy = y2 - y1;
@@ -425,7 +444,7 @@ async function init() {
       for (let cy = y1 + 2; cy < y2; cy++) {
         if (cy < 0 || cy >= GRID_H) continue;
         const cell = cpuCells[cy * GRID_W + x1];
-        if (getSolid(cell)) return false;
+        if (blocksEntity(cell)) return false;
       }
       // If moving horizontally, check that horizontal path at landing level is clear
       if (dx !== 0) {
@@ -435,7 +454,7 @@ async function init() {
           // Check the cell at the landing row (y2) and one above it
           const cellAtLanding = cpuCells[y2 * GRID_W + cx];
           const cellAboveLanding = y2 > 0 ? cpuCells[(y2 - 1) * GRID_W + cx] : 0;
-          if (getSolid(cellAtLanding) || getSolid(cellAboveLanding)) return false;
+          if (blocksEntity(cellAtLanding) || blocksEntity(cellAboveLanding)) return false;
         }
       }
       return true;
@@ -448,7 +467,7 @@ async function init() {
         const cy = Math.round(y1 + dy * t);
         if (cx < 0 || cx >= GRID_W || cy < 0 || cy >= GRID_H) continue;
         const cell = cpuCells[cy * GRID_W + cx];
-        if (getSolid(cell)) return false;
+        if (blocksEntity(cell)) return false;
       }
       return true;
     }
@@ -489,13 +508,13 @@ async function init() {
   function isEdgeDropClear(x1, y1, x2, y2) {
     // Check if we can step sideways (the cell we step into)
     const edgeCell = cpuCells[y1 * GRID_W + x2];
-    if (getSolid(edgeCell)) return false;
+    if (blocksEntity(edgeCell)) return false;
     
     // Check the vertical fall path from (x2, y1) down to (x2, y2)
     for (let cy = y1 + 1; cy < y2; cy++) {
       if (cy < 0 || cy >= GRID_H) continue;
       const cell = cpuCells[cy * GRID_W + x2];
-      if (getSolid(cell)) return false;
+      if (blocksEntity(cell)) return false;
     }
     return true;
   }
@@ -548,15 +567,16 @@ async function init() {
     
     // "Step off edge" moves - step sideways into air and fall to a landing spot
     // This handles cases where we're on a platform and need to walk off the edge
+    // Note: entities can pass through support cells (solid but passable)
     for (const stepX of [-1, 1]) {
       const edgeX = x + stepX;
-      // Check if the adjacent cell is empty (not walkable, but not solid either)
+      // Check if the adjacent cell is empty (not walkable, but not blocking entities)
       if (edgeX < 0 || edgeX >= GRID_W) continue;
       const edgeCell = cpuCells[y * GRID_W + edgeX];
-      if (getSolid(edgeCell)) continue; // Can't step into solid
+      if (blocksEntity(edgeCell)) continue; // Can't step into blocking solid
       if (isWalkable(edgeX, y)) continue; // Already handled by normal walking
       
-      // This is an empty cell with no ground - find where we'd land
+      // This is an empty/passable cell with no ground - find where we'd land
       for (let fallY = 1; fallY <= GRID_H; fallY++) {
         const landY = y + fallY;
         if (landY >= GRID_H) break;
@@ -565,9 +585,9 @@ async function init() {
           moves.push([stepX, fallY]);
           break; // Only add the first (highest) landing spot
         }
-        // Check if we hit solid before finding walkable (inside a structure)
+        // Check if we hit a blocking solid before finding walkable (inside a structure)
         const cellBelow = cpuCells[landY * GRID_W + edgeX];
-        if (getSolid(cellBelow)) break; // Can't fall through solid
+        if (blocksEntity(cellBelow)) break; // Can't fall through blocking solid
       }
     }
     
