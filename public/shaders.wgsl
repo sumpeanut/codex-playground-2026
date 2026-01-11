@@ -23,6 +23,8 @@ struct Params {
 // Cell encoding (u32):
 // bits 0..7   damage (0..255)   0 = intact, 255 = destroyed
 // bit  8      solid flag (1=solid, 0=empty)
+// bit  9      passable flag (1=entities can pass through, 0=blocking)
+//             A "support cell" has solid=1, passable=1 (solid in physics, walkable by entities)
 // (Destroyed implies empty)
 @group(0) @binding(1) var<storage, read_write> cellsA: array<u32>;
 @group(0) @binding(2) var<storage, read_write> cellsB: array<u32>;
@@ -39,15 +41,28 @@ fn idx(x: u32, y: u32) -> u32 { return y * params.w + x; }
 
 fn getDmg(c: u32) -> u32 { return c & 0xFFu; }
 fn getSolidBit(c: u32) -> u32 { return (c >> 8u) & 1u; }
+fn getPassableBit(c: u32) -> u32 { return (c >> 9u) & 1u; }
 
+// Returns true if cell is solid (for physics simulation)
 fn getSolid(c: u32) -> bool {
   let d = getDmg(c);
   return getSolidBit(c) == 1u && d < 255u;
 }
 
+// Returns true if cell is a "support" cell (solid but entities can pass through)
+fn isSupport(c: u32) -> bool {
+  return getSolid(c) && getPassableBit(c) == 1u;
+}
+
 fn packCell(solid: bool, dmg: u32) -> u32 {
   let s = select(0u, 1u, solid);
   return (dmg & 0xFFu) | (s << 8u);
+}
+
+fn packCellWithPassable(solid: bool, passable: bool, dmg: u32) -> u32 {
+  let s = select(0u, 1u, solid);
+  let p = select(0u, 1u, passable);
+  return (dmg & 0xFFu) | (s << 8u) | (p << 9u);
 }
 
 fn clampU32(v: u32, lo: u32, hi: u32) -> u32 { return max(lo, min(hi, v)); }
@@ -361,13 +376,19 @@ fn visualize(@builtin(global_invocation_id) gid: vec3<u32>) {
 
   let c = cellsA[idx(x, y)];
   let solid = getSolid(c);
+  let support = isSupport(c);
   let d = f32(getDmg(c)) / 255.0;
 
   var col: vec4<f32>;
   if (!solid) {
     col = vec4<f32>(0.06, 0.06, 0.07, 1.0);
+  } else if (support) {
+    // Support cells: darker brownish/gray color with pattern
+    // These are passable by entities but solid in simulation
+    let pattern = f32((x + y) % 2u) * 0.05;
+    col = vec4<f32>(0.35 - 0.20*d + pattern, 0.30 - 0.15*d + pattern, 0.25 - 0.10*d, 1.0);
   } else {
-    // Color shifts with damage
+    // Regular solid cells: light blue-gray, shifts with damage
     col = vec4<f32>(0.82 - 0.50*d, 0.85 - 0.70*d, 0.90 - 0.85*d, 1.0);
   }
 
