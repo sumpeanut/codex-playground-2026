@@ -1,0 +1,449 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Pathfinding Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #eee; padding: 20px; }
+    .test { margin: 10px 0; padding: 10px; border-radius: 6px; }
+    .pass { background: #1a4a1a; border: 1px solid #2a6a2a; }
+    .fail { background: #4a1a1a; border: 1px solid #6a2a2a; }
+    .pending { background: #3a3a1a; border: 1px solid #5a5a2a; }
+    canvas { border: 1px solid #444; margin: 10px 0; }
+    pre { background: #222; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+    h2 { margin-top: 30px; }
+  </style>
+</head>
+<body>
+  <h1>Pathfinding Tests</h1>
+  <div id="results"></div>
+  <h2>Visual Debug</h2>
+  <canvas id="debugCanvas" width="256" height="144"></canvas>
+  <pre id="log"></pre>
+
+  <script>
+    const GRID_W = 256;
+    const GRID_H = 144;
+    const results = document.getElementById('results');
+    const logEl = document.getElementById('log');
+    const canvas = document.getElementById('debugCanvas');
+    const ctx = canvas.getContext('2d');
+
+    let cpuCells = new Uint32Array(GRID_W * GRID_H);
+    let logText = '';
+
+    function log(msg) {
+      logText += msg + '\n';
+      logEl.textContent = logText;
+      console.log(msg);
+    }
+
+    function getSolid(cell) {
+      const dmg = cell & 0xff;
+      const solidBit = (cell >> 8) & 1;
+      return solidBit === 1 && dmg < 255;
+    }
+
+    function setSolid(x, y) {
+      if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
+      cpuCells[y * GRID_W + x] = (0) | (1 << 8); // no damage, solid
+    }
+
+    function clearGrid() {
+      cpuCells.fill(0);
+    }
+
+    function drawGrid() {
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      const scaleX = canvas.width / GRID_W;
+      const scaleY = canvas.height / GRID_H;
+      
+      for (let y = 0; y < GRID_H; y++) {
+        for (let x = 0; x < GRID_W; x++) {
+          if (getSolid(cpuCells[y * GRID_W + x])) {
+            ctx.fillStyle = '#666';
+            ctx.fillRect(x * scaleX, y * scaleY, scaleX, scaleY);
+          }
+        }
+      }
+    }
+
+    function drawPath(path, color = '#0f0') {
+      const scaleX = canvas.width / GRID_W;
+      const scaleY = canvas.height / GRID_H;
+      
+      ctx.strokeStyle = color;
+      ctx.lineWidth = 2;
+      ctx.beginPath();
+      for (let i = 0; i < path.length; i++) {
+        const px = path[i].x * scaleX + scaleX / 2;
+        const py = path[i].y * scaleY + scaleY / 2;
+        if (i === 0) ctx.moveTo(px, py);
+        else ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+
+    function drawPoint(x, y, color, label) {
+      const scaleX = canvas.width / GRID_W;
+      const scaleY = canvas.height / GRID_H;
+      
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x * scaleX + scaleX / 2, y * scaleY + scaleY / 2, 4, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.fillStyle = '#fff';
+      ctx.font = '10px sans-serif';
+      ctx.fillText(label, x * scaleX + scaleX / 2 + 6, y * scaleY + scaleY / 2 + 3);
+    }
+
+    // ---- Copy of pathfinding code for testing ----
+    function isWalkable(x, y) {
+      if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
+      const cell = cpuCells[y * GRID_W + x];
+      if (getSolid(cell)) return false;
+      if (y + 1 >= GRID_H) return true;
+      const below = cpuCells[(y + 1) * GRID_W + x];
+      return getSolid(below);
+    }
+
+    function isJumpPathClear(x1, y1, x2, y2) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      
+      if (dx === 0 && dy === 0) return true;
+      
+      const isFalling = dy > 0;
+      
+      if (isFalling) {
+        // For falling: check that vertical path is clear
+        for (let cy = y1 + 2; cy < y2; cy++) {
+          if (cy < 0 || cy >= GRID_H) continue;
+          const cell = cpuCells[cy * GRID_W + x1];
+          if (getSolid(cell)) {
+            log(`  Fall blocked at (${x1}, ${cy}) - solid cell in vertical path`);
+            return false;
+          }
+        }
+        // If moving horizontally, check that horizontal path at landing level is clear
+        if (dx !== 0) {
+          const stepX = dx > 0 ? 1 : -1;
+          for (let cx = x1 + stepX; cx !== x2 + stepX; cx += stepX) {
+            if (cx < 0 || cx >= GRID_W) continue;
+            const cellAtLanding = cpuCells[y2 * GRID_W + cx];
+            const cellAboveLanding = y2 > 0 ? cpuCells[(y2 - 1) * GRID_W + cx] : 0;
+            if (getSolid(cellAtLanding) || getSolid(cellAboveLanding)) {
+              log(`  Fall blocked at horizontal (${cx}, ${y2})`);
+              return false;
+            }
+          }
+        }
+        return true;
+      } else {
+        const steps = Math.max(Math.abs(dx), Math.abs(dy));
+        for (let i = 1; i < steps; i++) {
+          const t = i / steps;
+          const cx = Math.round(x1 + dx * t);
+          const cy = Math.round(y1 + dy * t);
+          if (cx < 0 || cx >= GRID_W || cy < 0 || cy >= GRID_H) continue;
+          const cell = cpuCells[cy * GRID_W + cx];
+          if (getSolid(cell)) return false;
+        }
+        return true;
+      }
+    }
+
+    const MAX_JUMP_UP = 5;
+    const MAX_JUMP_ACROSS = 3;
+
+    function canTraverse(x1, y1, x2, y2) {
+      if (!isWalkable(x2, y2)) return false;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      
+      if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) return true;
+      if (dy < 0 && dy >= -MAX_JUMP_UP && Math.abs(dx) <= MAX_JUMP_ACROSS) {
+        return isJumpPathClear(x1, y1, x2, y2);
+      }
+      if (dy > 0 && Math.abs(dx) <= MAX_JUMP_ACROSS) {
+        return isJumpPathClear(x1, y1, x2, y2);
+      }
+      return false;
+    }
+
+    function getTraversalCost(x1, y1, x2, y2) {
+      const dx = Math.abs(x2 - x1);
+      const dy = Math.abs(y2 - y1);
+      if (dx <= 1 && dy <= 1) return dx !== 0 && dy !== 0 ? 1.414 : 1;
+      return Math.sqrt(dx * dx + dy * dy) * 1.5;
+    }
+
+    function getPossibleMoves(x, y) {
+      const moves = [];
+      const walkDirs = [
+        [-1, 0], [1, 0], [0, -1], [0, 1],
+        [-1, -1], [1, -1], [-1, 1], [1, 1]
+      ];
+      for (const [dx, dy] of walkDirs) moves.push([dx, dy]);
+      
+      for (let jumpY = 2; jumpY <= MAX_JUMP_UP; jumpY++) {
+        for (let jumpX = -MAX_JUMP_ACROSS; jumpX <= MAX_JUMP_ACROSS; jumpX++) {
+          moves.push([jumpX, -jumpY]);
+        }
+      }
+      
+      for (let fallY = 2; fallY <= GRID_H; fallY++) {
+        for (let fallX = -MAX_JUMP_ACROSS; fallX <= MAX_JUMP_ACROSS; fallX++) {
+          const targetY = y + fallY;
+          const targetX = x + fallX;
+          if (targetY >= GRID_H) continue;
+          if (isWalkable(targetX, targetY)) {
+            moves.push([fallX, fallY]);
+          }
+        }
+      }
+      return moves;
+    }
+
+    function heuristic(x1, y1, x2, y2) {
+      return Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+    }
+
+    function findNearestWalkable(x, y) {
+      if (isWalkable(x, y)) return { x, y };
+      for (let r = 1; r < 20; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (isWalkable(nx, ny)) return { x: nx, y: ny };
+          }
+        }
+      }
+      return null;
+    }
+
+    function findPath(startX, startY, endX, endY) {
+      startX = Math.max(0, Math.min(GRID_W - 1, startX));
+      startY = Math.max(0, Math.min(GRID_H - 1, startY));
+      endX = Math.max(0, Math.min(GRID_W - 1, endX));
+      endY = Math.max(0, Math.min(GRID_H - 1, endY));
+
+      const start = findNearestWalkable(startX, startY);
+      const end = findNearestWalkable(endX, endY);
+      
+      log(`  Start: (${startX}, ${startY}) -> nearest walkable: ${start ? `(${start.x}, ${start.y})` : 'null'}`);
+      log(`  End: (${endX}, ${endY}) -> nearest walkable: ${end ? `(${end.x}, ${end.y})` : 'null'}`);
+      
+      if (!start || !end) return [];
+
+      const key = (x, y) => `${x},${y}`;
+      const openSet = new Map();
+      const closedSet = new Set();
+      const cameFrom = new Map();
+      const gScore = new Map();
+      const fScore = new Map();
+
+      const startKey = key(start.x, start.y);
+      gScore.set(startKey, 0);
+      fScore.set(startKey, heuristic(start.x, start.y, end.x, end.y));
+      openSet.set(startKey, start);
+
+      let iterations = 0;
+      const maxIterations = GRID_W * GRID_H * 2;
+
+      while (openSet.size > 0 && iterations < maxIterations) {
+        iterations++;
+
+        let current = null;
+        let currentKey = null;
+        let lowestF = Infinity;
+        for (const [k, node] of openSet) {
+          const f = fScore.get(k) || Infinity;
+          if (f < lowestF) {
+            lowestF = f;
+            current = node;
+            currentKey = k;
+          }
+        }
+
+        if (!current) break;
+
+        if (current.x === end.x && current.y === end.y) {
+          const path = [];
+          let ck = currentKey;
+          while (cameFrom.has(ck)) {
+            const [px, py] = ck.split(',').map(Number);
+            path.unshift({ x: px, y: py });
+            ck = cameFrom.get(ck);
+          }
+          log(`  Path found in ${iterations} iterations, length: ${path.length}`);
+          return path;
+        }
+
+        openSet.delete(currentKey);
+        closedSet.add(currentKey);
+
+        const moves = getPossibleMoves(current.x, current.y);
+        
+        for (const [dx, dy] of moves) {
+          const nx = current.x + dx;
+          const ny = current.y + dy;
+          const nk = key(nx, ny);
+
+          if (closedSet.has(nk)) continue;
+          if (!canTraverse(current.x, current.y, nx, ny)) continue;
+
+          const tentativeG = (gScore.get(currentKey) || 0) + 
+            getTraversalCost(current.x, current.y, nx, ny);
+
+          if (!openSet.has(nk)) {
+            openSet.set(nk, { x: nx, y: ny });
+          } else if (tentativeG >= (gScore.get(nk) || Infinity)) {
+            continue;
+          }
+
+          cameFrom.set(nk, currentKey);
+          gScore.set(nk, tentativeG);
+          fScore.set(nk, tentativeG + heuristic(nx, ny, end.x, end.y));
+        }
+      }
+
+      log(`  No path found after ${iterations} iterations`);
+      return [];
+    }
+
+    // ---- Test Cases ----
+    function addResult(name, passed, details = '') {
+      const div = document.createElement('div');
+      div.className = `test ${passed ? 'pass' : 'fail'}`;
+      div.innerHTML = `<strong>${passed ? '✓ PASS' : '✗ FAIL'}</strong>: ${name}${details ? '<br><small>' + details + '</small>' : ''}`;
+      results.appendChild(div);
+    }
+
+    function runTests() {
+      log('=== Running Pathfinding Tests ===\n');
+
+      // Test 1: Simple fall (10 units)
+      {
+        log('Test 1: Simple fall 10 units');
+        clearGrid();
+        // Create a platform at y=20
+        for (let x = 50; x < 70; x++) setSolid(x, 21);
+        // Create ground at y=100
+        for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
+        
+        const startX = 60, startY = 20;
+        const endX = 60, endY = 100;
+        
+        log(`  isWalkable(${startX}, ${startY}): ${isWalkable(startX, startY)}`);
+        log(`  isWalkable(${endX}, ${endY}): ${isWalkable(endX, endY)}`);
+        
+        const path = findPath(startX, startY, endX, endY);
+        const passed = path.length > 0;
+        addResult('Simple fall 10 units', passed, `Path length: ${path.length}`);
+        
+        if (!passed) {
+          drawGrid();
+          drawPoint(startX, startY, '#0f0', 'Start');
+          drawPoint(endX, endY, '#f00', 'End');
+        }
+        log('');
+      }
+
+      // Test 2: Long fall (50 units)
+      {
+        log('Test 2: Long fall 50 units');
+        clearGrid();
+        // Create a platform at y=30
+        for (let x = 50; x < 70; x++) setSolid(x, 31);
+        // Create ground at y=100
+        for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
+        
+        const startX = 60, startY = 30;
+        const endX = 60, endY = 100;
+        
+        log(`  isWalkable(${startX}, ${startY}): ${isWalkable(startX, startY)}`);
+        log(`  isWalkable(${endX}, ${endY}): ${isWalkable(endX, endY)}`);
+        
+        // Debug: Check if direct fall is possible
+        log(`  canTraverse(${startX}, ${startY}, ${endX}, ${endY}): ${canTraverse(startX, startY, endX, endY)}`);
+        log(`  isJumpPathClear(${startX}, ${startY}, ${endX}, ${endY}): ${isJumpPathClear(startX, startY, endX, endY)}`);
+        
+        // Check possible moves from start
+        const moves = getPossibleMoves(startX, startY);
+        const fallMoves = moves.filter(([dx, dy]) => dy > 5);
+        log(`  Possible fall moves (dy > 5): ${fallMoves.length}`);
+        log(`  Sample fall moves: ${JSON.stringify(fallMoves.slice(0, 5))}`);
+        
+        const path = findPath(startX, startY, endX, endY);
+        const passed = path.length > 0;
+        addResult('Long fall 50 units', passed, `Path length: ${path.length}`);
+        
+        drawGrid();
+        drawPoint(startX, startY, '#0f0', 'Start');
+        drawPoint(endX, endY, '#f00', 'End');
+        if (path.length > 0) {
+          drawPath([{x: startX, y: startY}, ...path], '#0ff');
+        }
+        log('');
+      }
+
+      // Test 3: Fall with horizontal movement
+      {
+        log('Test 3: Fall 30 units with horizontal offset');
+        clearGrid();
+        for (let x = 50; x < 70; x++) setSolid(x, 31);
+        for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
+        
+        const startX = 60, startY = 30;
+        const endX = 62, endY = 100;
+        
+        const path = findPath(startX, startY, endX, endY);
+        const passed = path.length > 0;
+        addResult('Fall with horizontal offset', passed, `Path length: ${path.length}`);
+        log('');
+      }
+
+      // Test 4: Jump up
+      {
+        log('Test 4: Jump up 4 units');
+        clearGrid();
+        for (let x = 50; x < 70; x++) setSolid(x, 101);
+        for (let x = 50; x < 70; x++) setSolid(x, 96);
+        
+        const startX = 60, startY = 100;
+        const endX = 60, endY = 95;
+        
+        const path = findPath(startX, startY, endX, endY);
+        const passed = path.length > 0;
+        addResult('Jump up 4 units', passed, `Path length: ${path.length}`);
+        log('');
+      }
+
+      // Test 5: Walk on flat ground
+      {
+        log('Test 5: Walk on flat ground');
+        clearGrid();
+        for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
+        
+        const startX = 50, startY = 100;
+        const endX = 100, endY = 100;
+        
+        const path = findPath(startX, startY, endX, endY);
+        const passed = path.length > 0;
+        addResult('Walk on flat ground', passed, `Path length: ${path.length}`);
+        log('');
+      }
+
+      log('=== Tests Complete ===');
+    }
+
+    runTests();
+  </script>
+</body>
+</html>
