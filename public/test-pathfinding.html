@@ -5,20 +5,31 @@
   <title>Pathfinding Test</title>
   <style>
     body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #eee; padding: 20px; }
-    .test { margin: 10px 0; padding: 10px; border-radius: 6px; }
+    .test { margin: 10px 0; padding: 10px; border-radius: 6px; cursor: pointer; }
+    .test:hover { opacity: 0.8; }
     .pass { background: #1a4a1a; border: 1px solid #2a6a2a; }
     .fail { background: #4a1a1a; border: 1px solid #6a2a2a; }
     .pending { background: #3a3a1a; border: 1px solid #5a5a2a; }
-    canvas { border: 1px solid #444; margin: 10px 0; }
-    pre { background: #222; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; }
+    .running { background: #1a3a4a; border: 1px solid #2a5a6a; }
+    canvas { border: 1px solid #444; margin: 10px 0; display: block; }
+    pre { background: #222; padding: 10px; border-radius: 4px; overflow-x: auto; font-size: 12px; max-height: 200px; overflow-y: auto; }
     h2 { margin-top: 30px; }
+    .controls { margin: 10px 0; }
+    button { background: #333; color: #eee; border: 1px solid #555; padding: 8px 16px; border-radius: 4px; cursor: pointer; margin-right: 8px; }
+    button:hover { background: #444; }
+    .info { font-size: 12px; opacity: 0.7; margin-top: 5px; }
   </style>
 </head>
 <body>
   <h1>Pathfinding Tests</h1>
+  <div class="controls">
+    <button id="runAll">Run All Tests</button>
+    <button id="stopTest">Stop</button>
+  </div>
+  <div class="info">Click a test to run it individually and watch the animation</div>
   <div id="results"></div>
   <h2>Visual Debug</h2>
-  <canvas id="debugCanvas" width="256" height="144"></canvas>
+  <canvas id="debugCanvas" width="512" height="288"></canvas>
   <pre id="log"></pre>
 
   <script>
@@ -31,11 +42,18 @@
 
     let cpuCells = new Uint32Array(GRID_W * GRID_H);
     let logText = '';
+    let currentAnimation = null;
+    let testElements = [];
 
     function log(msg) {
       logText += msg + '\n';
       logEl.textContent = logText;
-      console.log(msg);
+      logEl.scrollTop = logEl.scrollHeight;
+    }
+
+    function clearLog() {
+      logText = '';
+      logEl.textContent = '';
     }
 
     function getSolid(cell) {
@@ -46,7 +64,7 @@
 
     function setSolid(x, y) {
       if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
-      cpuCells[y * GRID_W + x] = (0) | (1 << 8); // no damage, solid
+      cpuCells[y * GRID_W + x] = (0) | (1 << 8);
     }
 
     function clearGrid() {
@@ -54,35 +72,48 @@
     }
 
     function drawGrid() {
-      ctx.fillStyle = '#111';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-      
       const scaleX = canvas.width / GRID_W;
       const scaleY = canvas.height / GRID_H;
+      
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
       
       for (let y = 0; y < GRID_H; y++) {
         for (let x = 0; x < GRID_W; x++) {
           if (getSolid(cpuCells[y * GRID_W + x])) {
-            ctx.fillStyle = '#666';
-            ctx.fillRect(x * scaleX, y * scaleY, scaleX, scaleY);
+            ctx.fillStyle = '#556';
+            ctx.fillRect(x * scaleX, y * scaleY, scaleX + 0.5, scaleY + 0.5);
           }
         }
       }
     }
 
-    function drawPath(path, color = '#0f0') {
+    function drawPath(path, startX, startY, color = 'rgba(0, 255, 255, 0.4)') {
+      if (path.length === 0) return;
       const scaleX = canvas.width / GRID_W;
       const scaleY = canvas.height / GRID_H;
       
       ctx.strokeStyle = color;
       ctx.lineWidth = 2;
       ctx.beginPath();
-      for (let i = 0; i < path.length; i++) {
-        const px = path[i].x * scaleX + scaleX / 2;
-        const py = path[i].y * scaleY + scaleY / 2;
-        if (i === 0) ctx.moveTo(px, py);
-        else ctx.lineTo(px, py);
+      ctx.moveTo(startX * scaleX + scaleX / 2, startY * scaleY + scaleY / 2);
+      for (const point of path) {
+        ctx.lineTo(point.x * scaleX + scaleX / 2, point.y * scaleY + scaleY / 2);
       }
+      ctx.stroke();
+    }
+
+    function drawEntity(x, y, color = '#0f0', radius = 6) {
+      const scaleX = canvas.width / GRID_W;
+      const scaleY = canvas.height / GRID_H;
+      
+      ctx.fillStyle = color;
+      ctx.beginPath();
+      ctx.arc(x * scaleX + scaleX / 2, y * scaleY + scaleY / 2, radius, 0, Math.PI * 2);
+      ctx.fill();
+      
+      ctx.strokeStyle = 'white';
+      ctx.lineWidth = 2;
       ctx.stroke();
     }
 
@@ -96,11 +127,11 @@
       ctx.fill();
       
       ctx.fillStyle = '#fff';
-      ctx.font = '10px sans-serif';
-      ctx.fillText(label, x * scaleX + scaleX / 2 + 6, y * scaleY + scaleY / 2 + 3);
+      ctx.font = '12px sans-serif';
+      ctx.fillText(label, x * scaleX + scaleX / 2 + 8, y * scaleY + scaleY / 2 + 4);
     }
 
-    // ---- Copy of pathfinding code for testing ----
+    // ---- Copy of pathfinding code ----
     function isWalkable(x, y) {
       if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
       const cell = cpuCells[y * GRID_W + x];
@@ -119,26 +150,18 @@
       const isFalling = dy > 0;
       
       if (isFalling) {
-        // For falling: check that vertical path is clear
         for (let cy = y1 + 2; cy < y2; cy++) {
           if (cy < 0 || cy >= GRID_H) continue;
           const cell = cpuCells[cy * GRID_W + x1];
-          if (getSolid(cell)) {
-            log(`  Fall blocked at (${x1}, ${cy}) - solid cell in vertical path`);
-            return false;
-          }
+          if (getSolid(cell)) return false;
         }
-        // If moving horizontally, check that horizontal path at landing level is clear
         if (dx !== 0) {
           const stepX = dx > 0 ? 1 : -1;
           for (let cx = x1 + stepX; cx !== x2 + stepX; cx += stepX) {
             if (cx < 0 || cx >= GRID_W) continue;
             const cellAtLanding = cpuCells[y2 * GRID_W + cx];
             const cellAboveLanding = y2 > 0 ? cpuCells[(y2 - 1) * GRID_W + cx] : 0;
-            if (getSolid(cellAtLanding) || getSolid(cellAboveLanding)) {
-              log(`  Fall blocked at horizontal (${cx}, ${y2})`);
-              return false;
-            }
+            if (getSolid(cellAtLanding) || getSolid(cellAboveLanding)) return false;
           }
         }
         return true;
@@ -156,6 +179,17 @@
       }
     }
 
+    function isEdgeDropClear(x1, y1, x2, y2) {
+      const edgeCell = cpuCells[y1 * GRID_W + x2];
+      if (getSolid(edgeCell)) return false;
+      for (let cy = y1 + 1; cy < y2; cy++) {
+        if (cy < 0 || cy >= GRID_H) continue;
+        const cell = cpuCells[cy * GRID_W + x2];
+        if (getSolid(cell)) return false;
+      }
+      return true;
+    }
+
     const MAX_JUMP_UP = 5;
     const MAX_JUMP_ACROSS = 3;
 
@@ -169,6 +203,9 @@
         return isJumpPathClear(x1, y1, x2, y2);
       }
       if (dy > 0 && Math.abs(dx) <= MAX_JUMP_ACROSS) {
+        if (Math.abs(dx) === 1 && dy > 1) {
+          return isEdgeDropClear(x1, y1, x2, y2);
+        }
         return isJumpPathClear(x1, y1, x2, y2);
       }
       return false;
@@ -205,6 +242,27 @@
           }
         }
       }
+      
+      // Step off edge moves
+      for (const stepX of [-1, 1]) {
+        const edgeX = x + stepX;
+        if (edgeX < 0 || edgeX >= GRID_W) continue;
+        const edgeCell = cpuCells[y * GRID_W + edgeX];
+        if (getSolid(edgeCell)) continue;
+        if (isWalkable(edgeX, y)) continue;
+        
+        for (let fallY = 1; fallY <= GRID_H; fallY++) {
+          const landY = y + fallY;
+          if (landY >= GRID_H) break;
+          if (isWalkable(edgeX, landY)) {
+            moves.push([stepX, fallY]);
+            break;
+          }
+          const cellBelow = cpuCells[landY * GRID_W + edgeX];
+          if (getSolid(cellBelow)) break;
+        }
+      }
+      
       return moves;
     }
 
@@ -235,9 +293,6 @@
 
       const start = findNearestWalkable(startX, startY);
       const end = findNearestWalkable(endX, endY);
-      
-      log(`  Start: (${startX}, ${startY}) -> nearest walkable: ${start ? `(${start.x}, ${start.y})` : 'null'}`);
-      log(`  End: (${endX}, ${endY}) -> nearest walkable: ${end ? `(${end.x}, ${end.y})` : 'null'}`);
       
       if (!start || !end) return [];
 
@@ -281,7 +336,6 @@
             path.unshift({ x: px, y: py });
             ck = cameFrom.get(ck);
           }
-          log(`  Path found in ${iterations} iterations, length: ${path.length}`);
           return path;
         }
 
@@ -313,137 +367,274 @@
         }
       }
 
-      log(`  No path found after ${iterations} iterations`);
       return [];
     }
 
-    // ---- Test Cases ----
-    function addResult(name, passed, details = '') {
-      const div = document.createElement('div');
-      div.className = `test ${passed ? 'pass' : 'fail'}`;
-      div.innerHTML = `<strong>${passed ? '✓ PASS' : '✗ FAIL'}</strong>: ${name}${details ? '<br><small>' + details + '</small>' : ''}`;
-      results.appendChild(div);
+    // Expand path with intermediate points
+    function expandPath(path, startX, startY) {
+      if (path.length === 0) return path;
+      
+      const expanded = [];
+      let prevX = startX;
+      let prevY = startY;
+      
+      for (const point of path) {
+        const dx = point.x - prevX;
+        const dy = point.y - prevY;
+        const dist = Math.max(Math.abs(dx), Math.abs(dy));
+        
+        const isFalling = dy > 0 && Math.abs(dy) > 1;
+        
+        if (dist > 1) {
+          const steps = dist;
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            expanded.push({
+              x: prevX + dx * t,
+              y: prevY + dy * t,
+              falling: isFalling,
+              fallIndex: isFalling ? i : 0,
+            });
+          }
+        } else {
+          expanded.push({ x: point.x, y: point.y, falling: false, fallIndex: 0 });
+        }
+        
+        prevX = point.x;
+        prevY = point.y;
+      }
+      
+      return expanded;
     }
 
-    function runTests() {
-      log('=== Running Pathfinding Tests ===\n');
-
-      // Test 1: Simple fall (10 units)
-      {
-        log('Test 1: Simple fall 10 units');
-        clearGrid();
-        // Create a platform at y=20
-        for (let x = 50; x < 70; x++) setSolid(x, 21);
-        // Create ground at y=100
-        for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
-        
-        const startX = 60, startY = 20;
-        const endX = 60, endY = 100;
-        
-        log(`  isWalkable(${startX}, ${startY}): ${isWalkable(startX, startY)}`);
-        log(`  isWalkable(${endX}, ${endY}): ${isWalkable(endX, endY)}`);
-        
-        const path = findPath(startX, startY, endX, endY);
-        const passed = path.length > 0;
-        addResult('Simple fall 10 units', passed, `Path length: ${path.length}`);
-        
-        if (!passed) {
-          drawGrid();
-          drawPoint(startX, startY, '#0f0', 'Start');
-          drawPoint(endX, endY, '#f00', 'End');
-        }
-        log('');
+    // ---- Animation System ----
+    class AnimatedEntity {
+      constructor(x, y, color = '#0f0') {
+        this.x = x;
+        this.y = y;
+        this.color = color;
+        this.path = [];
+        this.baseSpeed = 0.15;
+        this.currentSpeed = 0.15;
+        this.moveProgress = 0;
+        this.fallVelocity = 0;
       }
+      
+      update() {
+        if (this.path.length === 0) {
+          this.fallVelocity = 0;
+          this.currentSpeed = this.baseSpeed;
+          return false; // Not moving
+        }
+        
+        const nextPoint = this.path[0];
+        const GRAVITY = 0.08;
+        const MAX_FALL_SPEED = 1.5;
+        
+        if (nextPoint.falling) {
+          this.fallVelocity = Math.min(this.fallVelocity + GRAVITY, MAX_FALL_SPEED);
+          this.currentSpeed = Math.max(0.1, this.fallVelocity);
+        } else {
+          this.currentSpeed = this.baseSpeed;
+          this.fallVelocity = 0;
+        }
+        
+        this.moveProgress += this.currentSpeed;
+        if (this.moveProgress >= 1) {
+          this.moveProgress = 0;
+          const next = this.path.shift();
+          if (next) {
+            this.x = next.x;
+            this.y = next.y;
+          }
+        }
+        
+        return true; // Still moving
+      }
+      
+      draw() {
+        drawEntity(this.x, this.y, this.color);
+      }
+    }
 
-      // Test 2: Long fall (50 units)
+    // ---- Test Cases ----
+    const tests = [
       {
-        log('Test 2: Long fall 50 units');
-        clearGrid();
-        // Create a platform at y=30
-        for (let x = 50; x < 70; x++) setSolid(x, 31);
-        // Create ground at y=100
-        for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
-        
-        const startX = 60, startY = 30;
-        const endX = 60, endY = 100;
-        
-        log(`  isWalkable(${startX}, ${startY}): ${isWalkable(startX, startY)}`);
-        log(`  isWalkable(${endX}, ${endY}): ${isWalkable(endX, endY)}`);
-        
-        // Debug: Check if direct fall is possible
-        log(`  canTraverse(${startX}, ${startY}, ${endX}, ${endY}): ${canTraverse(startX, startY, endX, endY)}`);
-        log(`  isJumpPathClear(${startX}, ${startY}, ${endX}, ${endY}): ${isJumpPathClear(startX, startY, endX, endY)}`);
-        
-        // Check possible moves from start
-        const moves = getPossibleMoves(startX, startY);
-        const fallMoves = moves.filter(([dx, dy]) => dy > 5);
-        log(`  Possible fall moves (dy > 5): ${fallMoves.length}`);
-        log(`  Sample fall moves: ${JSON.stringify(fallMoves.slice(0, 5))}`);
-        
-        const path = findPath(startX, startY, endX, endY);
-        const passed = path.length > 0;
-        addResult('Long fall 50 units', passed, `Path length: ${path.length}`);
-        
+        name: 'Simple fall 10 units',
+        setup: () => {
+          clearGrid();
+          for (let x = 50; x < 70; x++) setSolid(x, 51);
+          for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
+          return { startX: 60, startY: 50, endX: 60, endY: 100 };
+        }
+      },
+      {
+        name: 'Long fall 50 units',
+        setup: () => {
+          clearGrid();
+          for (let x = 50; x < 70; x++) setSolid(x, 31);
+          for (let x = 0; x < GRID_W; x++) setSolid(x, 121);
+          return { startX: 60, startY: 30, endX: 60, endY: 120 };
+        }
+      },
+      {
+        name: 'Step off edge and fall',
+        setup: () => {
+          clearGrid();
+          // Platform
+          for (let x = 50; x < 70; x++) setSolid(x, 41);
+          // Ground
+          for (let x = 0; x < GRID_W; x++) setSolid(x, 121);
+          return { startX: 60, startY: 40, endX: 100, endY: 120 };
+        }
+      },
+      {
+        name: 'Jump up 4 units (stepped ledge)',
+        setup: () => {
+          clearGrid();
+          // Lower ground - full width
+          for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
+          // Upper ledge - offset to the right so entity can jump up to it
+          for (let x = 70; x < 120; x++) setSolid(x, 97);
+          // Start on lower ground, jump up to upper ledge
+          return { startX: 68, startY: 100, endX: 80, endY: 96 };
+        }
+      },
+      {
+        name: 'Walk on flat ground',
+        setup: () => {
+          clearGrid();
+          for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
+          return { startX: 50, startY: 100, endX: 100, endY: 100 };
+        }
+      },
+      {
+        name: 'Complex: walk, fall, walk',
+        setup: () => {
+          clearGrid();
+          // Upper platform
+          for (let x = 30; x < 60; x++) setSolid(x, 51);
+          // Lower platform  
+          for (let x = 50; x < 100; x++) setSolid(x, 101);
+          // Ground
+          for (let x = 0; x < GRID_W; x++) setSolid(x, 121);
+          return { startX: 35, startY: 50, endX: 90, endY: 100 };
+        }
+      },
+    ];
+
+    function stopAnimation() {
+      if (currentAnimation) {
+        cancelAnimationFrame(currentAnimation);
+        currentAnimation = null;
+      }
+    }
+
+    function runAnimatedTest(test, element) {
+      stopAnimation();
+      clearLog();
+      
+      log(`Running: ${test.name}`);
+      
+      const { startX, startY, endX, endY } = test.setup();
+      
+      log(`Start: (${startX}, ${startY}), End: (${endX}, ${endY})`);
+      log(`isWalkable(start): ${isWalkable(startX, startY)}`);
+      log(`isWalkable(end): ${isWalkable(endX, endY)}`);
+      
+      const path = findPath(startX, startY, endX, endY);
+      log(`Path found: ${path.length} steps`);
+      
+      if (path.length === 0) {
         drawGrid();
         drawPoint(startX, startY, '#0f0', 'Start');
         drawPoint(endX, endY, '#f00', 'End');
-        if (path.length > 0) {
-          drawPath([{x: startX, y: startY}, ...path], '#0ff');
+        element.className = 'test fail';
+        element.querySelector('small').textContent = 'No path found';
+        return;
+      }
+      
+      const expandedPath = expandPath(path, startX, startY);
+      log(`Expanded path: ${expandedPath.length} steps`);
+      
+      const entity = new AnimatedEntity(startX, startY, '#4f8');
+      entity.path = [...expandedPath];
+      
+      element.className = 'test running';
+      element.querySelector('small').textContent = 'Running...';
+      
+      function animate() {
+        drawGrid();
+        drawPath(expandedPath, startX, startY);
+        drawPoint(startX, startY, 'rgba(0, 255, 0, 0.5)', 'Start');
+        drawPoint(endX, endY, 'rgba(255, 100, 100, 0.8)', 'End');
+        entity.draw();
+        
+        const stillMoving = entity.update();
+        
+        if (stillMoving) {
+          currentAnimation = requestAnimationFrame(animate);
+        } else {
+          // Check if we reached the destination
+          const dist = Math.abs(entity.x - endX) + Math.abs(entity.y - endY);
+          const nearEnd = findNearestWalkable(endX, endY);
+          const distToNearEnd = nearEnd ? Math.abs(entity.x - nearEnd.x) + Math.abs(entity.y - nearEnd.y) : Infinity;
+          
+          if (dist <= 2 || distToNearEnd <= 2) {
+            element.className = 'test pass';
+            element.querySelector('small').textContent = `Reached destination in ${expandedPath.length} steps`;
+            log('✓ PASSED - Entity reached destination');
+          } else {
+            element.className = 'test fail';
+            element.querySelector('small').textContent = `Stopped at (${entity.x.toFixed(1)}, ${entity.y.toFixed(1)})`;
+            log(`✗ FAILED - Entity stopped at (${entity.x}, ${entity.y})`);
+          }
+          currentAnimation = null;
         }
-        log('');
       }
-
-      // Test 3: Fall with horizontal movement
-      {
-        log('Test 3: Fall 30 units with horizontal offset');
-        clearGrid();
-        for (let x = 50; x < 70; x++) setSolid(x, 31);
-        for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
-        
-        const startX = 60, startY = 30;
-        const endX = 62, endY = 100;
-        
-        const path = findPath(startX, startY, endX, endY);
-        const passed = path.length > 0;
-        addResult('Fall with horizontal offset', passed, `Path length: ${path.length}`);
-        log('');
-      }
-
-      // Test 4: Jump up
-      {
-        log('Test 4: Jump up 4 units');
-        clearGrid();
-        for (let x = 50; x < 70; x++) setSolid(x, 101);
-        for (let x = 50; x < 70; x++) setSolid(x, 96);
-        
-        const startX = 60, startY = 100;
-        const endX = 60, endY = 95;
-        
-        const path = findPath(startX, startY, endX, endY);
-        const passed = path.length > 0;
-        addResult('Jump up 4 units', passed, `Path length: ${path.length}`);
-        log('');
-      }
-
-      // Test 5: Walk on flat ground
-      {
-        log('Test 5: Walk on flat ground');
-        clearGrid();
-        for (let x = 0; x < GRID_W; x++) setSolid(x, 101);
-        
-        const startX = 50, startY = 100;
-        const endX = 100, endY = 100;
-        
-        const path = findPath(startX, startY, endX, endY);
-        const passed = path.length > 0;
-        addResult('Walk on flat ground', passed, `Path length: ${path.length}`);
-        log('');
-      }
-
-      log('=== Tests Complete ===');
+      
+      animate();
     }
 
-    runTests();
+    function createTestElement(test, index) {
+      const div = document.createElement('div');
+      div.className = 'test pending';
+      div.innerHTML = `<strong>${test.name}</strong><br><small>Click to run</small>`;
+      div.addEventListener('click', () => runAnimatedTest(test, div));
+      results.appendChild(div);
+      testElements.push({ test, element: div });
+      return div;
+    }
+
+    async function runAllTests() {
+      for (const { test, element } of testElements) {
+        await new Promise(resolve => {
+          const originalClassName = element.className;
+          runAnimatedTest(test, element);
+          
+          // Wait for animation to complete
+          const checkComplete = () => {
+            if (!currentAnimation) {
+              setTimeout(resolve, 500); // Brief pause between tests
+            } else {
+              setTimeout(checkComplete, 100);
+            }
+          };
+          checkComplete();
+        });
+      }
+    }
+
+    // Setup
+    tests.forEach((test, i) => createTestElement(test, i));
+    
+    document.getElementById('runAll').addEventListener('click', runAllTests);
+    document.getElementById('stopTest').addEventListener('click', stopAnimation);
+    
+    // Run first test by default
+    if (testElements.length > 0) {
+      runAnimatedTest(testElements[0].test, testElements[0].element);
+    }
   </script>
 </body>
 </html>
