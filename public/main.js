@@ -49,11 +49,77 @@ resizeCanvas();
 const state = { mx: 0, my: 0, mdown: 0, repair: 0, frame: 0 };
 const overlayCtx = overlay.getContext("2d");
 
+// ---- Pathfinding Worker ----
+let pathWorker = null;
+let pathRequestId = 0;
+const pendingPathRequests = new Map();
+let workerReady = false;
+
+function initPathWorker(cpuCells) {
+  pathWorker = new Worker('./pathfinding-worker.js');
+  
+  pathWorker.onmessage = function(e) {
+    const { type, data } = e.data;
+    
+    switch (type) {
+      case 'ready':
+        workerReady = true;
+        console.log('Pathfinding worker ready');
+        break;
+        
+      case 'pathResult':
+        const { requestId, path } = data;
+        const pending = pendingPathRequests.get(requestId);
+        if (pending) {
+          pending.resolve(path);
+          pendingPathRequests.delete(requestId);
+        }
+        break;
+    }
+  };
+  
+  // Initialize worker with grid data
+  pathWorker.postMessage({
+    type: 'init',
+    data: {
+      gridW: GRID_W,
+      gridH: GRID_H,
+      cells: cpuCells.buffer.slice(0)
+    }
+  }, [cpuCells.buffer.slice(0)]);
+}
+
+function updateWorkerCells(cpuCells) {
+  if (pathWorker && workerReady) {
+    pathWorker.postMessage({
+      type: 'updateCells',
+      data: { cells: cpuCells.buffer.slice(0) }
+    });
+  }
+}
+
+function requestPathAsync(startX, startY, endX, endY) {
+  return new Promise((resolve) => {
+    if (!pathWorker || !workerReady) {
+      resolve([]);
+      return;
+    }
+    
+    const requestId = pathRequestId++;
+    pendingPathRequests.set(requestId, { resolve });
+    
+    pathWorker.postMessage({
+      type: 'findPath',
+      data: { requestId, startX, startY, endX, endY }
+    });
+  });
+}
+
 // ---- Entity System ----
 const entities = [];
 let selectedEntity = null;
 let entityIdCounter = 0;
-let findPath = null; // Will be set inside init() when pathfinding is ready
+let findPath = null; // Synchronous fallback - will be set inside init()
 let expandPath = null; // Will be set inside init()
 
 function createEntity(x, y) {
@@ -95,18 +161,34 @@ canvas.addEventListener("pointerdown", (e) => {
 
     if (clickedEntity) {
       selectedEntity = clickedEntity;
-    } else if (selectedEntity && findPath) {
+    } else if (selectedEntity && workerReady) {
       // Debug: log pathfinding attempt
       console.log(`Pathfinding from (${Math.floor(selectedEntity.x)}, ${Math.floor(selectedEntity.y)}) to (${gridX}, ${gridY})`);
       
-      // Move selected entity to clicked position (pathfinding)
+      // Move selected entity to clicked position (async pathfinding via worker)
+      const entityToMove = selectedEntity;
+      requestPathAsync(
+        Math.floor(entityToMove.x), Math.floor(entityToMove.y),
+        gridX, gridY
+      ).then(path => {
+        console.log(`Path found: ${path.length} steps`);
+        if (path.length > 0) {
+          // Expand path for smooth movement on jumps/falls
+          entityToMove.path = expandPath(path, entityToMove.x, entityToMove.y);
+          entityToMove.moveProgress = 0;
+        } else {
+          console.log('No path found!');
+        }
+      });
+    } else if (selectedEntity && findPath) {
+      // Fallback to synchronous pathfinding if worker not ready
+      console.log(`Pathfinding (sync) from (${Math.floor(selectedEntity.x)}, ${Math.floor(selectedEntity.y)}) to (${gridX}, ${gridY})`);
       const path = findPath(
         Math.floor(selectedEntity.x), Math.floor(selectedEntity.y),
         gridX, gridY
       );
       console.log(`Path found: ${path.length} steps`);
       if (path.length > 0) {
-        // Expand path for smooth movement on jumps/falls
         selectedEntity.path = expandPath(path, selectedEntity.x, selectedEntity.y);
         selectedEntity.moveProgress = 0;
       } else {
@@ -262,26 +344,171 @@ async function init() {
     const cells = new Uint32Array(cellCount);
 
     function setSolid(x, y, dmg = 0, passable = false) {
+      if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
       const p = passable ? (1 << 9) : 0;
       cells[y * GRID_W + x] = (dmg & 0xff) | (1 << 8) | p;
     }
 
+    function getSolid(x, y) {
+      if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
+      return (cells[y * GRID_W + x] & (1 << 8)) !== 0;
+    }
+
+    function clearCell(x, y) {
+      if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
+      cells[y * GRID_W + x] = 0;
+    }
+
     // Ground slab
-    for (let y = GRID_H - 18; y < GRID_H; y++) {
+    const groundY = GRID_H - 10;
+    for (let y = groundY; y < GRID_H; y++) {
       for (let x = 0; x < GRID_W; x++) setSolid(x, y, 0);
     }
 
-    // Two buildings
+    // Helper: create a filled rectangle
     function rect(x0, y0, w, h) {
-      for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) setSolid(x, y, 0);
+      for (let y = y0; y < y0 + h; y++) {
+        for (let x = x0; x < x0 + w; x++) setSolid(x, y, 0);
+      }
     }
-    rect(40, GRID_H - 60, 34, 42);
-    rect(150, GRID_H - 70, 44, 52);
 
-    // Window hole
-    for (let y = GRID_H - 52; y < GRID_H - 36; y++) {
-      for (let x = 48; x < 60; x++) cells[y * GRID_W + x] = 0;
+    // Helper: create a hollow rectangle (just walls)
+    function hollowRect(x0, y0, w, h, wallThickness = 2) {
+      for (let y = y0; y < y0 + h; y++) {
+        for (let x = x0; x < x0 + w; x++) {
+          const isWall = x < x0 + wallThickness || x >= x0 + w - wallThickness ||
+                         y < y0 + wallThickness || y >= y0 + h - wallThickness;
+          if (isWall) setSolid(x, y, 0);
+        }
+      }
     }
+
+    // Helper: create a floor (horizontal platform using passable/support tiles)
+    function floor(x0, y, w, thickness = 2) {
+      for (let t = 0; t < thickness; t++) {
+        for (let x = x0; x < x0 + w; x++) setSolid(x, y + t, 0, true); // passable
+      }
+    }
+
+    // Helper: create a door opening (2 tiles wide to clear wall, passable for structural stability)
+    function door(x, y, h = 6) {
+      for (let dy = 0; dy < h; dy++) {
+        setSolid(x, y + dy, 0, true);
+        setSolid(x + 1, y + dy, 0, true);
+      }
+    }
+
+    // Helper: create a vertical support column with capitals
+    // Thin (1 tile) shaft that widens (3 tiles) where it meets floors/beams
+    function column(centerX, topY, bottomY, width = 2) {
+      for (let y = topY; y <= bottomY; y++) {
+        // Check if this row has existing solid (floor/beam) at or near the column
+        const hasFloorHere = getSolid(centerX, y) || getSolid(centerX + 1, y);
+        const hasFloorLeft = getSolid(centerX - 1, y);
+        const hasFloorRight = getSolid(centerX + width, y);
+        const atFloor = hasFloorHere || hasFloorLeft || hasFloorRight || y === topY || y === bottomY;
+        
+        if (atFloor) {
+          // Wide capital where column meets floor (3 tiles centered)
+          for (let w = -1; w < width + 1; w++) {
+            if (!getSolid(centerX + w, y)) {
+              setSolid(centerX + w, y, 0, true);
+            }
+          }
+        } else {
+          // Thin shaft (1 tile, centered)
+          const shaftX = centerX + Math.floor(width / 2);
+          if (!getSolid(shaftX, y)) {
+            setSolid(shaftX, y, 0, true);
+          }
+        }
+      }
+    }
+
+    // ========== Building 1: 3-story building on the left ==========
+    const b1x = 20;
+    const b1w = 40;
+    const floorHeight = 20;
+    const wallThick = 2;
+    const roofY1 = groundY - 3 * floorHeight;
+    
+    // FIRST: Lay all floors to ensure continuous horizontal bonds
+    for (let floorNum = 0; floorNum < 3; floorNum++) {
+      const floorY = groundY - (floorNum + 1) * floorHeight;
+      floor(b1x, floorY + floorHeight - wallThick, b1w, wallThick);
+    }
+    floor(b1x, roofY1, b1w, wallThick); // Roof
+    
+    // THEN: Walls from roof to ground (full height)
+    rect(b1x, roofY1, wallThick, groundY - roofY1);
+    rect(b1x + b1w - wallThick, roofY1, wallThick, groundY - roofY1);
+
+    // Doors on ground floor (both sides for exterior access)
+    door(b1x, groundY - 8, 8); // Left door
+    door(b1x + b1w - wallThick, groundY - 8, 8); // Right door
+
+    // Support columns for Building 1 (internal pillars from roof to ground)
+    column(b1x + 10, roofY1, groundY - 1, 3);
+    column(b1x + 20, roofY1, groundY - 1, 3);
+    column(b1x + 30, roofY1, groundY - 1, 3);
+
+    // ========== Building 2: 2-story smaller building ==========
+    const b2x = 80;
+    const b2w = 30;
+    const roofY2 = groundY - 2 * floorHeight;
+    
+    // FIRST: Lay all floors
+    for (let floorNum = 0; floorNum < 2; floorNum++) {
+      const floorY = groundY - (floorNum + 1) * floorHeight;
+      floor(b2x, floorY + floorHeight - wallThick, b2w, wallThick);
+    }
+    floor(b2x, roofY2, b2w, wallThick); // Roof
+    
+    // THEN: Walls from roof to ground
+    rect(b2x, roofY2, wallThick, groundY - roofY2);
+    rect(b2x + b2w - wallThick, roofY2, wallThick, groundY - roofY2);
+
+    // Door
+    door(b2x + b2w - wallThick, groundY - 8, 8);
+
+    // Support columns for Building 2
+    column(b2x + 10, roofY2, groundY - 1, 3);
+    column(b2x + 20, roofY2, groundY - 1, 3);
+
+    // ========== Building 3: Tall tower on the right ==========
+    const b3x = 130;
+    const b3w = 25;
+    const roofY3 = groundY - 4 * floorHeight;
+    
+    // FIRST: Lay all floors
+    for (let floorNum = 0; floorNum < 4; floorNum++) {
+      const floorY = groundY - (floorNum + 1) * floorHeight;
+      floor(b3x, floorY + floorHeight - wallThick, b3w, wallThick);
+    }
+    floor(b3x, roofY3, b3w, wallThick); // Roof
+    
+    // THEN: Walls from roof to ground
+    rect(b3x, roofY3, wallThick, groundY - roofY3);
+    rect(b3x + b3w - wallThick, roofY3, wallThick, groundY - roofY3);
+
+    // Doors (both sides for exterior access)
+    door(b3x, groundY - 8, 8); // Left door
+    door(b3x + b3w - wallThick, groundY - 8, 8); // Right door
+
+    // Support columns for Building 3 (tower needs central support, spaced for stability)
+    column(b3x + 8, roofY3, groundY - 1, 3);
+    column(b3x + 16, roofY3, groundY - 1, 3);
+
+    // ========== Outdoor platforms and bridges ==========
+    // Platform between buildings 1 and 2
+    floor(b1x + b1w, groundY - floorHeight - 5, 20, 2);
+    // Support column for platform
+    column(b1x + b1w + 10, groundY - floorHeight - 5, groundY - 1, 3);
+
+    // Bridge from building 2 to building 3 (second floor)
+    floor(b2x + b2w, groundY - floorHeight - 5, b3x - b2x - b2w, 2);
+    // Support column for bridge
+    column(b2x + b2w + Math.floor((b3x - b2x - b2w) / 2), groundY - floorHeight - 5, groundY - 1, 3);
 
     device.queue.writeBuffer(cellsA, 0, cells);
     device.queue.writeBuffer(cellsB, 0, cells);
@@ -293,6 +520,11 @@ async function init() {
     v.fill(255);
     device.queue.writeBuffer(bondsH, 0, h);
     device.queue.writeBuffer(bondsV, 0, v);
+    
+    // Clear existing entities
+    entities.length = 0;
+    selectedEntity = null;
+    updateEntityCountUI();
   }
 
   ui.reset.addEventListener("click", resetWorld);
@@ -338,6 +570,9 @@ async function init() {
     readbackBuffer.unmap();
     quadState.readbackInFlight = false;
     rebuildQuadTree();
+    
+    // Update pathfinding worker with new cell data
+    updateWorkerCells(cpuCells);
   }
 
   function buildQuadTree(x, y, w, h, maxDepth, depth = 0) {
@@ -411,6 +646,75 @@ async function init() {
       node.h * scaleY
     );
   }
+
+  // ---- Binary Heap Priority Queue (O(log n) operations) ----
+  // Uses lazy deletion - nodes may be re-added with better priority
+  class BinaryHeap {
+    constructor() {
+      this.nodes = [];
+    }
+
+    get size() {
+      return this.nodes.length;
+    }
+
+    push(key, priority, data) {
+      const node = { key, priority, data };
+      this.nodes.push(node);
+      this._bubbleUp(this.nodes.length - 1);
+    }
+
+    pop() {
+      if (this.nodes.length === 0) return null;
+      const min = this.nodes[0];
+      const last = this.nodes.pop();
+      if (this.nodes.length > 0) {
+        this.nodes[0] = last;
+        this._sinkDown(0);
+      }
+      return min;
+    }
+
+    _bubbleUp(i) {
+      const node = this.nodes[i];
+      const priority = node.priority;
+      while (i > 0) {
+        const parentI = (i - 1) >> 1;
+        const parent = this.nodes[parentI];
+        if (priority >= parent.priority) break;
+        this.nodes[i] = parent;
+        i = parentI;
+      }
+      this.nodes[i] = node;
+    }
+
+    _sinkDown(i) {
+      const length = this.nodes.length;
+      const node = this.nodes[i];
+      const priority = node.priority;
+      while (true) {
+        const left = (i << 1) + 1;
+        const right = left + 1;
+        let smallest = i;
+        let smallestPriority = priority;
+        if (left < length && this.nodes[left].priority < smallestPriority) {
+          smallest = left;
+          smallestPriority = this.nodes[left].priority;
+        }
+        if (right < length && this.nodes[right].priority < smallestPriority) {
+          smallest = right;
+        }
+        if (smallest === i) break;
+        this.nodes[i] = this.nodes[smallest];
+        i = smallest;
+      }
+      this.nodes[i] = node;
+    }
+  }
+
+  // ---- Integer key encoding (avoids string allocation) ----
+  const nodeKey = (x, y) => y * GRID_W + x;
+  const keyToXY = (key) => ({ x: key % GRID_W, y: Math.floor(key / GRID_W) });
 
   // ---- Walkable Surface Detection ----
   // A cell is walkable if it's empty (or a support cell) AND has a solid cell directly below it
@@ -594,7 +898,7 @@ async function init() {
     return moves;
   }
 
-  // ---- A* Pathfinding ----
+  // ---- A* Pathfinding (Optimized with Binary Heap + Integer Keys) ----
   findPath = function(startX, startY, endX, endY) {
     // Clamp to grid
     startX = Math.max(0, Math.min(GRID_W - 1, startX));
@@ -613,47 +917,19 @@ async function init() {
       console.log('  No walkable start or end found');
       return [];
     }
-    
-    // Debug: check if direct fall is possible
-    if (end.y > start.y) {
-      const dy = end.y - start.y;
-      const dx = end.x - start.x;
-      console.log(`  Fall distance: ${dy}, horizontal: ${dx}`);
-      console.log(`  isWalkable(end): ${isWalkable(end.x, end.y)}`);
-      console.log(`  canTraverse direct: ${canTraverse(start.x, start.y, end.x, end.y)}`);
-    }
 
-    const key = (x, y) => `${x},${y}`;
-    const openSet = new Map();
+    const endKey = nodeKey(end.x, end.y);
+    
+    // Node data stored in single Map for cache locality
+    // Each node: { g: number, parent: number|null }
+    const nodes = new Map();
     const closedSet = new Set();
-    const cameFrom = new Map();
-    const gScore = new Map();
-    const fScore = new Map();
+    const openSet = new BinaryHeap();
 
-    const startKey = key(start.x, start.y);
-    gScore.set(startKey, 0);
-    fScore.set(startKey, heuristic(start.x, start.y, end.x, end.y));
-    openSet.set(startKey, start);
-
-    // Debug: Check if walking is possible from start
-    const walkMoves = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    console.log(`  Walkable neighbors from start:`);
-    for (const [dx, dy] of walkMoves) {
-      const nx = start.x + dx;
-      const ny = start.y + dy;
-      const walkable = isWalkable(nx, ny);
-      const canTrav = canTraverse(start.x, start.y, nx, ny);
-      if (walkable || canTrav) {
-        console.log(`    (${nx}, ${ny}): walkable=${walkable}, canTraverse=${canTrav}`);
-      }
-    }
-    
-    // Debug: Check fall options from start
-    const fallMoves = getPossibleMoves(start.x, start.y).filter(([dx, dy]) => dy > 1);
-    console.log(`  Fall options from start: ${fallMoves.length}`);
-    if (fallMoves.length > 0 && fallMoves.length <= 10) {
-      console.log(`  First few falls: ${JSON.stringify(fallMoves.slice(0, 5))}`);
-    }
+    const startKey = nodeKey(start.x, start.y);
+    const startH = heuristic(start.x, start.y, end.x, end.y);
+    nodes.set(startKey, { g: 0, parent: null });
+    openSet.push(startKey, startH, { x: start.x, y: start.y });
 
     let iterations = 0;
     const maxIterations = GRID_W * GRID_H * 2;
@@ -661,59 +937,61 @@ async function init() {
     while (openSet.size > 0 && iterations < maxIterations) {
       iterations++;
 
-      // Get node with lowest fScore
-      let current = null;
-      let currentKey = null;
-      let lowestF = Infinity;
-      for (const [k, node] of openSet) {
-        const f = fScore.get(k) || Infinity;
-        if (f < lowestF) {
-          lowestF = f;
-          current = node;
-          currentKey = k;
-        }
-      }
+      // Get node with lowest fScore - O(log n) with heap
+      const current = openSet.pop();
+      if (!current) break;
+      
+      const currentKey = current.key;
+      const cx = current.data.x;
+      const cy = current.data.y;
 
-      if (!current) break; // No valid node found
+      // Skip if already processed (can happen with lazy deletion)
+      if (closedSet.has(currentKey)) continue;
 
-      if (current.x === end.x && current.y === end.y) {
-        // Reconstruct path
+      // Check if we reached the goal
+      if (currentKey === endKey) {
+        // Reconstruct path using integer keys
         const path = [];
         let ck = currentKey;
-        while (cameFrom.has(ck)) {
-          const [px, py] = ck.split(',').map(Number);
-          path.unshift({ x: px, y: py });
-          ck = cameFrom.get(ck);
+        while (ck !== null && nodes.has(ck)) {
+          const { x, y } = keyToXY(ck);
+          path.unshift({ x, y });
+          ck = nodes.get(ck).parent;
         }
+        // Remove start position from path (entity is already there)
+        if (path.length > 0) path.shift();
         return path;
       }
 
-      openSet.delete(currentKey);
       closedSet.add(currentKey);
+      const currentG = nodes.get(currentKey).g;
 
       // Get all possible moves including jumps from current position
-      const moves = getPossibleMoves(current.x, current.y);
+      const moves = getPossibleMoves(cx, cy);
       
       for (const [dx, dy] of moves) {
-        const nx = current.x + dx;
-        const ny = current.y + dy;
-        const nk = key(nx, ny);
+        const nx = cx + dx;
+        const ny = cy + dy;
+        const nk = nodeKey(nx, ny);
 
         if (closedSet.has(nk)) continue;
-        if (!canTraverse(current.x, current.y, nx, ny)) continue;
+        if (!canTraverse(cx, cy, nx, ny)) continue;
 
-        const tentativeG = (gScore.get(currentKey) || 0) + 
-          getTraversalCost(current.x, current.y, nx, ny);
+        const tentativeG = currentG + getTraversalCost(cx, cy, nx, ny);
+        const existingNode = nodes.get(nk);
 
-        if (!openSet.has(nk)) {
-          openSet.set(nk, { x: nx, y: ny });
-        } else if (tentativeG >= (gScore.get(nk) || Infinity)) {
-          continue;
+        if (!existingNode) {
+          // New node - add to open set
+          const h = heuristic(nx, ny, end.x, end.y);
+          nodes.set(nk, { g: tentativeG, parent: currentKey });
+          openSet.push(nk, tentativeG + h, { x: nx, y: ny });
+        } else if (tentativeG < existingNode.g) {
+          // Found better path - update node and re-add to heap (lazy deletion)
+          existingNode.g = tentativeG;
+          existingNode.parent = currentKey;
+          const h = heuristic(nx, ny, end.x, end.y);
+          openSet.push(nk, tentativeG + h, { x: nx, y: ny });
         }
-
-        cameFrom.set(nk, currentKey);
-        gScore.set(nk, tentativeG);
-        fScore.set(nk, tentativeG + heuristic(nx, ny, end.x, end.y));
       }
     }
 
@@ -1008,6 +1286,44 @@ async function init() {
     drawEntities();
     
     requestAnimationFrame(frame);
+  }
+
+  // Initialize pathfinding worker after first readback
+  requestGpuReadback().then(() => {
+    initPathWorker(cpuCells);
+    
+    // Spawn 10 entities that will randomly walk around
+    for (let i = 0; i < 10; i++) {
+      spawnEntityOnSurface();
+    }
+    
+    // Start random walking behavior for all entities
+    startRandomWalking();
+  });
+
+  // ---- Random Walking Behavior ----
+  function startRandomWalking() {
+    setInterval(() => {
+      for (const entity of entities) {
+        // Only assign new path if entity has finished current one
+        if (entity.path.length === 0 && workerReady) {
+          // Find a random walkable destination
+          const destX = Math.floor(Math.random() * GRID_W);
+          const destY = Math.floor(Math.random() * GRID_H);
+          
+          // Request path asynchronously
+          requestPathAsync(
+            Math.floor(entity.x), Math.floor(entity.y),
+            destX, destY
+          ).then(path => {
+            if (path.length > 0) {
+              entity.path = expandPath(path, entity.x, entity.y);
+              entity.moveProgress = 0;
+            }
+          });
+        }
+      }
+    }, 2000); // Check every 2 seconds
   }
 
   requestAnimationFrame(frame);
