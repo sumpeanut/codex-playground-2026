@@ -1,0 +1,1348 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Pathfinding Performance Test</title>
+  <style>
+    body { font-family: system-ui, sans-serif; background: #1a1a1a; color: #eee; padding: 20px; margin: 0; }
+    .container { max-width: 1200px; margin: 0 auto; }
+    h1 { margin-bottom: 5px; }
+    .subtitle { color: #888; margin-bottom: 20px; }
+    
+    .stats-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-bottom: 20px;
+    }
+    
+    .stat-card {
+      background: #252525;
+      border: 1px solid #333;
+      border-radius: 8px;
+      padding: 15px;
+    }
+    
+    .stat-label { color: #888; font-size: 12px; text-transform: uppercase; }
+    .stat-value { font-size: 28px; font-weight: bold; margin: 5px 0; }
+    .stat-unit { color: #666; font-size: 14px; }
+    .stat-good { color: #4f8; }
+    .stat-warn { color: #fa0; }
+    .stat-bad { color: #f44; }
+    
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      margin: 20px 0;
+      padding: 15px;
+      background: #222;
+      border-radius: 8px;
+    }
+    
+    .control-group {
+      display: flex;
+      flex-direction: column;
+      gap: 5px;
+    }
+    
+    .control-group label {
+      font-size: 12px;
+      color: #888;
+    }
+    
+    button {
+      background: #2a6a3a;
+      color: #fff;
+      border: none;
+      padding: 10px 20px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 14px;
+      font-weight: 500;
+    }
+    
+    button:hover { background: #3a7a4a; }
+    button:disabled { background: #444; color: #888; cursor: not-allowed; }
+    button.stop { background: #6a2a2a; }
+    button.stop:hover { background: #7a3a3a; }
+    
+    input[type="number"], select {
+      background: #333;
+      color: #eee;
+      border: 1px solid #444;
+      padding: 8px 12px;
+      border-radius: 4px;
+      width: 100px;
+    }
+    
+    .canvas-container {
+      display: grid;
+      grid-template-columns: 1fr 300px;
+      gap: 20px;
+      margin: 20px 0;
+    }
+    
+    canvas {
+      border: 1px solid #444;
+      width: 100%;
+      aspect-ratio: 16/9;
+      background: #111;
+    }
+    
+    .chart-container {
+      background: #222;
+      border-radius: 8px;
+      padding: 15px;
+    }
+    
+    .chart-title {
+      font-size: 14px;
+      color: #888;
+      margin-bottom: 10px;
+    }
+    
+    #perfChart {
+      width: 100%;
+      height: 200px;
+    }
+    
+    .results-table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 20px 0;
+      font-size: 13px;
+    }
+    
+    .results-table th, .results-table td {
+      padding: 10px;
+      text-align: left;
+      border-bottom: 1px solid #333;
+    }
+    
+    .results-table th {
+      background: #252525;
+      color: #888;
+      text-transform: uppercase;
+      font-size: 11px;
+    }
+    
+    .results-table tr:hover { background: #252525; }
+    
+    pre {
+      background: #222;
+      padding: 15px;
+      border-radius: 8px;
+      overflow-x: auto;
+      font-size: 12px;
+      max-height: 300px;
+      overflow-y: auto;
+    }
+    
+    .progress-bar {
+      width: 100%;
+      height: 6px;
+      background: #333;
+      border-radius: 3px;
+      overflow: hidden;
+      margin: 10px 0;
+    }
+    
+    .progress-fill {
+      height: 100%;
+      background: linear-gradient(90deg, #2a6a3a, #4f8);
+      transition: width 0.2s;
+    }
+    
+    .warning-banner {
+      background: #4a3a1a;
+      border: 1px solid #6a5a2a;
+      border-radius: 6px;
+      padding: 12px 15px;
+      margin: 15px 0;
+      font-size: 13px;
+    }
+    
+    .budget-indicator {
+      display: inline-block;
+      padding: 3px 8px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    
+    .budget-ok { background: #1a4a1a; color: #4f8; }
+    .budget-tight { background: #4a3a1a; color: #fa0; }
+    .budget-exceeded { background: #4a1a1a; color: #f44; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Pathfinding Performance Test</h1>
+    <p class="subtitle">Find the limits of entity and pathfinding performance at 60 FPS</p>
+    
+    <div class="warning-banner">
+      <strong>⚡ Target:</strong> 60 FPS = 16.67ms per frame. Assuming ~8ms for other processes (rendering, physics, game logic), 
+      pathfinding budget is approximately <strong>~8ms per frame</strong>.
+    </div>
+    
+    <div style="display: flex; gap: 20px; margin: 15px 0; padding: 12px 15px; background: #222; border-radius: 6px; font-size: 13px;">
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 20px; height: 20px; background: #556; border-radius: 3px;"></div>
+        <span>Solid (blocks entities)</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 20px; height: 20px; background: linear-gradient(45deg, #5a4d42 50%, #4a3d32 50%); border-radius: 3px;"></div>
+        <span>Support (walkable through + on top)</span>
+      </div>
+      <div style="display: flex; align-items: center; gap: 8px;">
+        <div style="width: 20px; height: 20px; background: #111; border: 1px solid #333; border-radius: 3px;"></div>
+        <span>Empty (air)</span>
+      </div>
+    </div>
+    
+    <div class="stats-grid">
+      <div class="stat-card">
+        <div class="stat-label">Active Entities</div>
+        <div class="stat-value" id="statEntities">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Paths Computed</div>
+        <div class="stat-value" id="statPaths">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Avg Path Time</div>
+        <div class="stat-value"><span id="statAvgTime">0</span><span class="stat-unit">ms</span></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Frame Time</div>
+        <div class="stat-value"><span id="statFrameTime">0</span><span class="stat-unit">ms</span></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Current FPS</div>
+        <div class="stat-value" id="statFPS">0</div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Paths/Frame Budget</div>
+        <div class="stat-value" id="statBudget">-</div>
+      </div>
+    </div>
+    
+    <div class="controls">
+      <div class="control-group">
+        <label>Test Mode</label>
+        <select id="testMode">
+          <option value="single">Single Path Benchmark</option>
+          <option value="batch">Batch Pathfinding</option>
+          <option value="stress">Stress Test (Find Limit)</option>
+          <option value="realtime">Realtime Simulation</option>
+        </select>
+      </div>
+      
+      <div class="control-group">
+        <label>Entity Count</label>
+        <input type="number" id="entityCount" value="10" min="1" max="1000">
+      </div>
+      
+      <div class="control-group">
+        <label>Paths per Frame</label>
+        <input type="number" id="pathsPerFrame" value="1" min="1" max="100">
+      </div>
+      
+      <div class="control-group">
+        <label>Map Complexity</label>
+        <select id="mapComplexity">
+          <option value="simple">Simple (flat ground)</option>
+          <option value="medium">Medium (platforms)</option>
+          <option value="complex">Complex (maze-like)</option>
+          <option value="worst">Worst Case (many obstacles)</option>
+        </select>
+      </div>
+      
+      <div class="control-group" style="justify-content: flex-end;">
+        <button id="startTest">▶ Start Test</button>
+      </div>
+      
+      <div class="control-group" style="justify-content: flex-end;">
+        <button id="stopTest" class="stop" disabled>■ Stop</button>
+      </div>
+    </div>
+    
+    <div class="progress-bar">
+      <div class="progress-fill" id="progressFill" style="width: 0%"></div>
+    </div>
+    
+    <div class="canvas-container">
+      <canvas id="debugCanvas"></canvas>
+      <div class="chart-container">
+        <div class="chart-title">Frame Time History (ms)</div>
+        <canvas id="perfChart"></canvas>
+        <div class="chart-title" style="margin-top: 15px;">Path Cost Distribution</div>
+        <canvas id="histChart" style="height: 150px;"></canvas>
+      </div>
+    </div>
+    
+    <h2>Benchmark Results</h2>
+    <table class="results-table">
+      <thead>
+        <tr>
+          <th>Test</th>
+          <th>Entities</th>
+          <th>Paths Computed</th>
+          <th>Avg Path Time</th>
+          <th>Min/Max</th>
+          <th>Paths/Frame Safe</th>
+          <th>Status</th>
+        </tr>
+      </thead>
+      <tbody id="resultsBody">
+      </tbody>
+    </table>
+    
+    <h2>Console Log</h2>
+    <pre id="log"></pre>
+  </div>
+
+  <script>
+    // ---- Constants ----
+    const GRID_W = 256;
+    const GRID_H = 144;
+    const TARGET_FPS = 60;
+    const FRAME_BUDGET_MS = 1000 / TARGET_FPS; // 16.67ms
+    const PATHFINDING_BUDGET_MS = 8; // Assuming half the frame for other work
+    
+    // ---- DOM Elements ----
+    const canvas = document.getElementById('debugCanvas');
+    const ctx = canvas.getContext('2d');
+    const perfChart = document.getElementById('perfChart');
+    const perfCtx = perfChart.getContext('2d');
+    const histChart = document.getElementById('histChart');
+    const histCtx = histChart.getContext('2d');
+    const logEl = document.getElementById('log');
+    
+    // Resize canvases
+    function resizeCanvases() {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width;
+      canvas.height = rect.height;
+      perfChart.width = perfChart.parentElement.clientWidth - 30;
+      perfChart.height = 200;
+      histChart.width = histChart.parentElement.clientWidth - 30;
+      histChart.height = 150;
+    }
+    window.addEventListener('resize', resizeCanvases);
+    resizeCanvases();
+    
+    // ---- State ----
+    let cpuCells = new Uint32Array(GRID_W * GRID_H);
+    let running = false;
+    let animationId = null;
+    
+    // Stats tracking
+    const stats = {
+      entities: 0,
+      pathsComputed: 0,
+      pathTimes: [],
+      frameTimes: [],
+      frameTimeHistory: [],
+      pathCostDistribution: [],
+      startTime: 0,
+    };
+    
+    // Entities for realtime simulation
+    let entities = [];
+    
+    // ---- Logging ----
+    let logText = '';
+    function log(msg) {
+      const timestamp = new Date().toLocaleTimeString();
+      logText = `[${timestamp}] ${msg}\n` + logText;
+      if (logText.length > 10000) logText = logText.slice(0, 10000);
+      logEl.textContent = logText;
+    }
+    
+    function clearLog() {
+      logText = '';
+      logEl.textContent = '';
+    }
+    
+    // ---- Cell Helpers ----
+    function getSolid(cell) {
+      const dmg = cell & 0xff;
+      const solidBit = (cell >> 8) & 1;
+      return solidBit === 1 && dmg < 255;
+    }
+    
+    function getPassable(cell) {
+      return ((cell >> 9) & 1) === 1;
+    }
+    
+    function blocksEntity(cell) {
+      return getSolid(cell) && !getPassable(cell);
+    }
+    
+    function setSolid(x, y) {
+      if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
+      cpuCells[y * GRID_W + x] = (0) | (1 << 8); // solid=1, passable=0
+    }
+    
+    // Support cell: solid for physics but entities can pass through
+    function setSupport(x, y) {
+      if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
+      cpuCells[y * GRID_W + x] = (0) | (1 << 8) | (1 << 9); // solid=1, passable=1
+    }
+    
+    function clearGrid() {
+      cpuCells.fill(0);
+    }
+    
+    // ---- Map Generation ----
+    // Helper to create a solid rectangle (obstacle block)
+    function fillRect(x1, y1, x2, y2, useSupport = false) {
+      const setCell = useSupport ? setSupport : setSolid;
+      for (let y = y1; y <= y2; y++) {
+        for (let x = x1; x <= x2; x++) {
+          setCell(x, y);
+        }
+      }
+    }
+    
+    // Helper to create stairs (jumpable height increments)
+    function createStairs(startX, startY, stepWidth, stepHeight, steps, direction, useSupport = false) {
+      const setCell = useSupport ? setSupport : setSolid;
+      // direction: 1 = going up-right, -1 = going up-left
+      for (let i = 0; i < steps; i++) {
+        const x = startX + (direction * i * stepWidth);
+        const y = startY - (i * stepHeight);
+        // Each step is a small platform
+        for (let dx = 0; dx < stepWidth; dx++) {
+          const px = x + (direction > 0 ? dx : -dx);
+          if (px >= 0 && px < GRID_W) {
+            setCell(px, y);
+          }
+        }
+      }
+    }
+    
+    function generateMap(complexity) {
+      clearGrid();
+      walkableCache = null; // Clear cache when map changes
+      
+      // Ground floor for all maps - always solid so entities can walk on it
+      const groundY = GRID_H - 5;
+      for (let x = 0; x < GRID_W; x++) setSolid(x, groundY);
+      
+      switch (complexity) {
+        case 'simple':
+          // Just flat ground - already done above
+          break;
+          
+        case 'medium':
+          // Support cell platforms - entities can walk through AND on top
+          // Creates a complex multi-path environment
+          
+          // Support cell structures scattered across - walkable on top AND through
+          for (let i = 0; i < 15; i++) {
+            const bx = 10 + i * 16;
+            const bw = 10;
+            const bh = 15;
+            // Support cell blocks - entities can walk through these
+            fillRect(bx, groundY - bh, bx + bw, groundY - 1, true);
+          }
+          
+          // Add elevated support platforms (within MAX_JUMP_UP = 5)
+          for (let i = 0; i < 8; i++) {
+            const px = 20 + i * 30;
+            const py = groundY - 4; // 4 cells up - jumpable
+            for (let x = px; x < px + 15; x++) setSupport(x, py);
+            // More support above
+            fillRect(px + 3, py - 5, px + 10, py - 1, true);
+          }
+          break;
+          
+        case 'complex':
+          // Mixed grid of solid and passable tiles
+          // Creates a checkerboard-like pattern with varied paths
+          
+          // Create multiple walkable levels with mixed tiles
+          for (let level = 1; level <= 6; level++) {
+            const py = groundY - level * 5;
+            for (let x = 5; x < GRID_W - 5; x++) {
+              // Alternating pattern of solid and support
+              const isSolid = (x + level) % 3 === 0;
+              const isSupp = (x + level) % 3 === 1;
+              if (isSolid) {
+                setSolid(x, py);
+              } else if (isSupp) {
+                setSupport(x, py);
+              }
+              // else empty - creates gaps
+            }
+          }
+          
+          // Vertical mixed columns connecting levels
+          for (let i = 0; i < 20; i++) {
+            const cx = 10 + i * 12;
+            for (let y = groundY - 35; y < groundY; y++) {
+              // Mixed pattern vertically too
+              if ((y + i) % 2 === 0) {
+                setSupport(cx, y);
+                if (cx + 1 < GRID_W) setSupport(cx + 1, y);
+              } else if ((y + i) % 4 === 1) {
+                setSolid(cx, y);
+              }
+            }
+          }
+          break;
+          
+        case 'worst':
+          // Absolute worst case: dense mixed grid everywhere
+          // Every cell is either solid, support, or empty in a complex pattern
+          // This creates maximum pathfinding confusion
+          
+          // Fill almost the entire screen with a mixed pattern
+          for (let y = 10; y < groundY; y++) {
+            for (let x = 5; x < GRID_W - 5; x++) {
+              // Complex pattern based on position
+              const pattern = (x * 7 + y * 11) % 5;
+              if (pattern === 0 || pattern === 1) {
+                setSupport(x, y);
+              } else if (pattern === 2) {
+                setSolid(x, y);
+              }
+              // else empty (pattern 3, 4)
+            }
+          }
+          
+          // Add some fully solid barriers to force long paths
+          for (let i = 0; i < 8; i++) {
+            const wallX = 30 + i * 28;
+            const gapY = 20 + (i % 4) * 25; // Staggered gaps
+            for (let y = 10; y < groundY; y++) {
+              // Solid wall with a small gap
+              if (Math.abs(y - gapY) > 3) {
+                for (let dx = 0; dx < 3; dx++) {
+                  if (wallX + dx < GRID_W - 5) {
+                    setSolid(wallX + dx, y);
+                  }
+                }
+              }
+            }
+          }
+          break;
+      }
+    }
+    
+    // ---- Pathfinding (copied from test-pathfinding.html) ----
+    function isWalkable(x, y) {
+      if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
+      const cell = cpuCells[y * GRID_W + x];
+      if (blocksEntity(cell)) return false;
+      if (y + 1 >= GRID_H) return true;
+      const below = cpuCells[(y + 1) * GRID_W + x];
+      return getSolid(below);
+    }
+    
+    // Find a random walkable position anywhere on the map
+    // Caches walkable positions for efficiency
+    let walkableCache = null;
+    function cacheWalkablePositions() {
+      walkableCache = [];
+      for (let y = 0; y < GRID_H; y++) {
+        for (let x = 0; x < GRID_W; x++) {
+          if (isWalkable(x, y)) {
+            walkableCache.push({ x, y });
+          }
+        }
+      }
+    }
+    
+    function getRandomWalkablePosition() {
+      if (!walkableCache || walkableCache.length === 0) {
+        cacheWalkablePositions();
+      }
+      if (walkableCache.length === 0) {
+        return { x: GRID_W / 2, y: GRID_H - 6 };
+      }
+      return walkableCache[Math.floor(Math.random() * walkableCache.length)];
+    }
+    
+    function isJumpPathClear(x1, y1, x2, y2) {
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      if (dx === 0 && dy === 0) return true;
+      
+      const isFalling = dy > 0;
+      if (isFalling) {
+        for (let cy = y1 + 2; cy < y2; cy++) {
+          if (cy < 0 || cy >= GRID_H) continue;
+          const cell = cpuCells[cy * GRID_W + x1];
+          if (getSolid(cell)) return false;
+        }
+        if (dx !== 0) {
+          const stepX = dx > 0 ? 1 : -1;
+          for (let cx = x1 + stepX; cx !== x2 + stepX; cx += stepX) {
+            if (cx < 0 || cx >= GRID_W) continue;
+            const cellAtLanding = cpuCells[y2 * GRID_W + cx];
+            const cellAboveLanding = y2 > 0 ? cpuCells[(y2 - 1) * GRID_W + cx] : 0;
+            if (getSolid(cellAtLanding) || getSolid(cellAboveLanding)) return false;
+          }
+        }
+        return true;
+      } else {
+        const steps = Math.max(Math.abs(dx), Math.abs(dy));
+        for (let i = 1; i < steps; i++) {
+          const t = i / steps;
+          const cx = Math.round(x1 + dx * t);
+          const cy = Math.round(y1 + dy * t);
+          if (cx < 0 || cx >= GRID_W || cy < 0 || cy >= GRID_H) continue;
+          const cell = cpuCells[cy * GRID_W + cx];
+          if (getSolid(cell)) return false;
+        }
+        return true;
+      }
+    }
+    
+    function isEdgeDropClear(x1, y1, x2, y2) {
+      const edgeCell = cpuCells[y1 * GRID_W + x2];
+      if (getSolid(edgeCell)) return false;
+      for (let cy = y1 + 1; cy < y2; cy++) {
+        if (cy < 0 || cy >= GRID_H) continue;
+        const cell = cpuCells[cy * GRID_W + x2];
+        if (getSolid(cell)) return false;
+      }
+      return true;
+    }
+    
+    const MAX_JUMP_UP = 5;
+    const MAX_JUMP_ACROSS = 3;
+    
+    function canTraverse(x1, y1, x2, y2) {
+      if (!isWalkable(x2, y2)) return false;
+      const dx = x2 - x1;
+      const dy = y2 - y1;
+      
+      if (Math.abs(dx) <= 1 && Math.abs(dy) <= 1) return true;
+      if (dy < 0 && dy >= -MAX_JUMP_UP && Math.abs(dx) <= MAX_JUMP_ACROSS) {
+        return isJumpPathClear(x1, y1, x2, y2);
+      }
+      if (dy > 0 && Math.abs(dx) <= MAX_JUMP_ACROSS) {
+        if (Math.abs(dx) === 1 && dy > 1) return isEdgeDropClear(x1, y1, x2, y2);
+        return isJumpPathClear(x1, y1, x2, y2);
+      }
+      return false;
+    }
+    
+    function getTraversalCost(x1, y1, x2, y2) {
+      const dx = Math.abs(x2 - x1);
+      const dy = Math.abs(y2 - y1);
+      if (dx <= 1 && dy <= 1) return dx !== 0 && dy !== 0 ? 1.414 : 1;
+      return Math.sqrt(dx * dx + dy * dy) * 1.5;
+    }
+    
+    function getPossibleMoves(x, y) {
+      const moves = [];
+      const walkDirs = [[-1, 0], [1, 0], [0, -1], [0, 1], [-1, -1], [1, -1], [-1, 1], [1, 1]];
+      for (const [dx, dy] of walkDirs) moves.push([dx, dy]);
+      
+      for (let jumpY = 2; jumpY <= MAX_JUMP_UP; jumpY++) {
+        for (let jumpX = -MAX_JUMP_ACROSS; jumpX <= MAX_JUMP_ACROSS; jumpX++) {
+          moves.push([jumpX, -jumpY]);
+        }
+      }
+      
+      for (let fallY = 2; fallY <= GRID_H; fallY++) {
+        for (let fallX = -MAX_JUMP_ACROSS; fallX <= MAX_JUMP_ACROSS; fallX++) {
+          const targetY = y + fallY;
+          if (targetY >= GRID_H) continue;
+          if (isWalkable(x + fallX, targetY)) moves.push([fallX, fallY]);
+        }
+      }
+      
+      for (const stepX of [-1, 1]) {
+        const edgeX = x + stepX;
+        if (edgeX < 0 || edgeX >= GRID_W) continue;
+        const edgeCell = cpuCells[y * GRID_W + edgeX];
+        if (getSolid(edgeCell)) continue;
+        if (isWalkable(edgeX, y)) continue;
+        
+        for (let fallY = 1; fallY <= GRID_H; fallY++) {
+          const landY = y + fallY;
+          if (landY >= GRID_H) break;
+          if (isWalkable(edgeX, landY)) {
+            moves.push([stepX, fallY]);
+            break;
+          }
+          const cellBelow = cpuCells[landY * GRID_W + edgeX];
+          if (getSolid(cellBelow)) break;
+        }
+      }
+      
+      return moves;
+    }
+    
+    function heuristic(x1, y1, x2, y2) {
+      return Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
+    }
+    
+    function findNearestWalkable(x, y) {
+      if (isWalkable(x, y)) return { x, y };
+      for (let r = 1; r < 20; r++) {
+        for (let dy = -r; dy <= r; dy++) {
+          for (let dx = -r; dx <= r; dx++) {
+            if (Math.abs(dx) !== r && Math.abs(dy) !== r) continue;
+            const nx = x + dx;
+            const ny = y + dy;
+            if (isWalkable(nx, ny)) return { x: nx, y: ny };
+          }
+        }
+      }
+      return null;
+    }
+    
+    function findPath(startX, startY, endX, endY) {
+      startX = Math.max(0, Math.min(GRID_W - 1, startX));
+      startY = Math.max(0, Math.min(GRID_H - 1, startY));
+      endX = Math.max(0, Math.min(GRID_W - 1, endX));
+      endY = Math.max(0, Math.min(GRID_H - 1, endY));
+      
+      const start = findNearestWalkable(startX, startY);
+      const end = findNearestWalkable(endX, endY);
+      if (!start || !end) return [];
+      
+      const key = (x, y) => `${x},${y}`;
+      const openSet = new Map();
+      const closedSet = new Set();
+      const cameFrom = new Map();
+      const gScore = new Map();
+      const fScore = new Map();
+      
+      const startKey = key(start.x, start.y);
+      gScore.set(startKey, 0);
+      fScore.set(startKey, heuristic(start.x, start.y, end.x, end.y));
+      openSet.set(startKey, start);
+      
+      let iterations = 0;
+      const maxIterations = GRID_W * GRID_H * 2;
+      
+      while (openSet.size > 0 && iterations < maxIterations) {
+        iterations++;
+        
+        let current = null;
+        let currentKey = null;
+        let lowestF = Infinity;
+        for (const [k, node] of openSet) {
+          const f = fScore.get(k) || Infinity;
+          if (f < lowestF) {
+            lowestF = f;
+            current = node;
+            currentKey = k;
+          }
+        }
+        
+        if (!current) break;
+        
+        if (current.x === end.x && current.y === end.y) {
+          const path = [];
+          let ck = currentKey;
+          while (cameFrom.has(ck)) {
+            const [px, py] = ck.split(',').map(Number);
+            path.unshift({ x: px, y: py });
+            ck = cameFrom.get(ck);
+          }
+          return path;
+        }
+        
+        openSet.delete(currentKey);
+        closedSet.add(currentKey);
+        
+        const moves = getPossibleMoves(current.x, current.y);
+        
+        for (const [dx, dy] of moves) {
+          const nx = current.x + dx;
+          const ny = current.y + dy;
+          const nk = key(nx, ny);
+          
+          if (closedSet.has(nk)) continue;
+          if (!canTraverse(current.x, current.y, nx, ny)) continue;
+          
+          const tentativeG = (gScore.get(currentKey) || 0) + getTraversalCost(current.x, current.y, nx, ny);
+          
+          if (!openSet.has(nk)) {
+            openSet.set(nk, { x: nx, y: ny });
+          } else if (tentativeG >= (gScore.get(nk) || Infinity)) {
+            continue;
+          }
+          
+          cameFrom.set(nk, currentKey);
+          gScore.set(nk, tentativeG);
+          fScore.set(nk, tentativeG + heuristic(nx, ny, end.x, end.y));
+        }
+      }
+      
+      return [];
+    }
+    
+    function expandPath(path, startX, startY) {
+      if (path.length === 0) return path;
+      
+      const expanded = [];
+      let prevX = startX;
+      let prevY = startY;
+      
+      for (const point of path) {
+        const dx = point.x - prevX;
+        const dy = point.y - prevY;
+        const dist = Math.max(Math.abs(dx), Math.abs(dy));
+        const isFalling = dy > 0 && Math.abs(dy) > 1;
+        
+        if (dist > 1) {
+          const steps = dist;
+          for (let i = 1; i <= steps; i++) {
+            const t = i / steps;
+            expanded.push({ x: prevX + dx * t, y: prevY + dy * t, falling: isFalling });
+          }
+        } else {
+          expanded.push({ x: point.x, y: point.y, falling: false });
+        }
+        
+        prevX = point.x;
+        prevY = point.y;
+      }
+      
+      return expanded;
+    }
+    
+    // ---- Timed Pathfinding ----
+    function timedFindPath(startX, startY, endX, endY) {
+      const t0 = performance.now();
+      const path = findPath(startX, startY, endX, endY);
+      const t1 = performance.now();
+      return { path, time: t1 - t0, length: path.length };
+    }
+    
+    // ---- Entity Class ----
+    class Entity {
+      constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.path = [];
+        this.color = `hsl(${Math.random() * 360}, 70%, 60%)`;
+        this.moveProgress = 0;
+        this.needsPath = true;
+      }
+      
+      update() {
+        if (this.path.length === 0) return;
+        
+        this.moveProgress += 0.15;
+        if (this.moveProgress >= 1) {
+          this.moveProgress = 0;
+          const next = this.path.shift();
+          if (next) {
+            this.x = next.x;
+            this.y = next.y;
+          }
+          if (this.path.length === 0) {
+            this.needsPath = true;
+          }
+        }
+      }
+    }
+    
+    // ---- Drawing ----
+    function drawGrid() {
+      const scaleX = canvas.width / GRID_W;
+      const scaleY = canvas.height / GRID_H;
+      
+      ctx.fillStyle = '#111';
+      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      
+      for (let y = 0; y < GRID_H; y++) {
+        for (let x = 0; x < GRID_W; x++) {
+          const cell = cpuCells[y * GRID_W + x];
+          if (getSolid(cell)) {
+            if (getPassable(cell)) {
+              // Support cell - brownish, entities can pass through
+              const pattern = (x + y) % 2 === 0;
+              ctx.fillStyle = pattern ? '#5a4d42' : '#4a3d32';
+            } else {
+              // Regular solid - gray-blue
+              ctx.fillStyle = '#556';
+            }
+            ctx.fillRect(x * scaleX, y * scaleY, scaleX + 0.5, scaleY + 0.5);
+          }
+        }
+      }
+    }
+    
+    function drawEntities() {
+      const scaleX = canvas.width / GRID_W;
+      const scaleY = canvas.height / GRID_H;
+      
+      for (const ent of entities) {
+        ctx.fillStyle = ent.color;
+        ctx.beginPath();
+        ctx.arc(ent.x * scaleX + scaleX / 2, ent.y * scaleY + scaleY / 2, 3, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+    
+    function drawFrameTimeChart() {
+      const w = perfChart.width;
+      const h = perfChart.height;
+      
+      perfCtx.fillStyle = '#1a1a1a';
+      perfCtx.fillRect(0, 0, w, h);
+      
+      // Draw budget lines
+      const maxMs = 50;
+      const budgetY = h - (PATHFINDING_BUDGET_MS / maxMs) * h;
+      const frameY = h - (FRAME_BUDGET_MS / maxMs) * h;
+      
+      perfCtx.strokeStyle = '#4a4a1a';
+      perfCtx.setLineDash([5, 5]);
+      perfCtx.beginPath();
+      perfCtx.moveTo(0, budgetY);
+      perfCtx.lineTo(w, budgetY);
+      perfCtx.stroke();
+      
+      perfCtx.strokeStyle = '#4a1a1a';
+      perfCtx.beginPath();
+      perfCtx.moveTo(0, frameY);
+      perfCtx.lineTo(w, frameY);
+      perfCtx.stroke();
+      perfCtx.setLineDash([]);
+      
+      // Draw labels
+      perfCtx.fillStyle = '#666';
+      perfCtx.font = '10px sans-serif';
+      perfCtx.fillText(`${PATHFINDING_BUDGET_MS}ms budget`, 5, budgetY - 3);
+      perfCtx.fillText(`${FRAME_BUDGET_MS.toFixed(1)}ms frame`, 5, frameY - 3);
+      
+      // Draw frame time history
+      const history = stats.frameTimeHistory.slice(-100);
+      if (history.length < 2) return;
+      
+      perfCtx.strokeStyle = '#4f8';
+      perfCtx.lineWidth = 1.5;
+      perfCtx.beginPath();
+      
+      for (let i = 0; i < history.length; i++) {
+        const x = (i / 100) * w;
+        const y = h - Math.min(history[i] / maxMs, 1) * h;
+        if (i === 0) perfCtx.moveTo(x, y);
+        else perfCtx.lineTo(x, y);
+      }
+      perfCtx.stroke();
+    }
+    
+    function drawHistogram() {
+      const w = histChart.width;
+      const h = histChart.height;
+      
+      histCtx.fillStyle = '#1a1a1a';
+      histCtx.fillRect(0, 0, w, h);
+      
+      if (stats.pathTimes.length === 0) return;
+      
+      // Create histogram buckets (0-1ms, 1-2ms, 2-3ms, etc.)
+      const buckets = new Array(20).fill(0);
+      const bucketSize = 1; // 1ms per bucket
+      
+      for (const time of stats.pathTimes.slice(-500)) {
+        const bucket = Math.min(Math.floor(time / bucketSize), buckets.length - 1);
+        buckets[bucket]++;
+      }
+      
+      const maxCount = Math.max(...buckets, 1);
+      const barWidth = w / buckets.length;
+      
+      for (let i = 0; i < buckets.length; i++) {
+        const barHeight = (buckets[i] / maxCount) * (h - 20);
+        const x = i * barWidth;
+        const y = h - 20 - barHeight;
+        
+        histCtx.fillStyle = i < 8 ? '#2a6a3a' : (i < 16 ? '#6a5a1a' : '#6a2a2a');
+        histCtx.fillRect(x + 1, y, barWidth - 2, barHeight);
+      }
+      
+      // Draw x-axis labels
+      histCtx.fillStyle = '#666';
+      histCtx.font = '9px sans-serif';
+      for (let i = 0; i < buckets.length; i += 4) {
+        histCtx.fillText(`${i}ms`, i * barWidth, h - 5);
+      }
+    }
+    
+    // ---- Stats Update ----
+    function updateStats() {
+      document.getElementById('statEntities').textContent = stats.entities;
+      document.getElementById('statPaths').textContent = stats.pathsComputed;
+      
+      const avgTime = stats.pathTimes.length > 0 
+        ? (stats.pathTimes.reduce((a, b) => a + b, 0) / stats.pathTimes.length)
+        : 0;
+      const avgEl = document.getElementById('statAvgTime');
+      avgEl.textContent = avgTime.toFixed(2);
+      avgEl.className = avgTime < 1 ? 'stat-good' : (avgTime < 5 ? 'stat-warn' : 'stat-bad');
+      
+      const avgFrame = stats.frameTimes.length > 0
+        ? (stats.frameTimes.reduce((a, b) => a + b, 0) / stats.frameTimes.length)
+        : 0;
+      const frameEl = document.getElementById('statFrameTime');
+      frameEl.textContent = avgFrame.toFixed(2);
+      frameEl.className = avgFrame < PATHFINDING_BUDGET_MS ? 'stat-good' : (avgFrame < FRAME_BUDGET_MS ? 'stat-warn' : 'stat-bad');
+      
+      const fps = avgFrame > 0 ? Math.min(1000 / avgFrame, 999) : 0;
+      const fpsEl = document.getElementById('statFPS');
+      fpsEl.textContent = Math.round(fps);
+      fpsEl.className = fps >= 60 ? 'stat-good' : (fps >= 30 ? 'stat-warn' : 'stat-bad');
+      
+      // Calculate safe paths per frame
+      const safePathsPerFrame = avgTime > 0 ? Math.floor(PATHFINDING_BUDGET_MS / avgTime) : '-';
+      const budgetEl = document.getElementById('statBudget');
+      budgetEl.textContent = safePathsPerFrame;
+    }
+    
+    // ---- Test Modes ----
+    async function runSinglePathBenchmark() {
+      const complexity = document.getElementById('mapComplexity').value;
+      generateMap(complexity);
+      
+      log(`Starting single path benchmark with ${complexity} map...`);
+      
+      stats.pathTimes = [];
+      stats.pathsComputed = 0;
+      
+      const iterations = 100;
+      
+      for (let i = 0; i < iterations && running; i++) {
+        // Random start and end points from anywhere walkable on the map
+        const start = getRandomWalkablePosition();
+        const end = getRandomWalkablePosition();
+        
+        const result = timedFindPath(start.x, start.y, end.x, end.y);
+        stats.pathTimes.push(result.time);
+        stats.pathsComputed++;
+        
+        document.getElementById('progressFill').style.width = `${((i + 1) / iterations) * 100}%`;
+        
+        if (i % 10 === 0) {
+          updateStats();
+          drawGrid();
+          drawFrameTimeChart();
+          drawHistogram();
+          await new Promise(r => setTimeout(r, 0));
+        }
+      }
+      
+      const avg = stats.pathTimes.reduce((a, b) => a + b, 0) / stats.pathTimes.length;
+      const min = Math.min(...stats.pathTimes);
+      const max = Math.max(...stats.pathTimes);
+      const safePerFrame = Math.floor(PATHFINDING_BUDGET_MS / avg);
+      
+      log(`Benchmark complete: ${stats.pathsComputed} paths`);
+      log(`  Average: ${avg.toFixed(3)}ms, Min: ${min.toFixed(3)}ms, Max: ${max.toFixed(3)}ms`);
+      log(`  Safe paths per frame: ${safePerFrame} (at ${PATHFINDING_BUDGET_MS}ms budget)`);
+      
+      addResult('Single Path', '-', stats.pathsComputed, avg, min, max, safePerFrame);
+    }
+    
+    async function runBatchTest() {
+      const complexity = document.getElementById('mapComplexity').value;
+      const pathsPerFrame = parseInt(document.getElementById('pathsPerFrame').value);
+      generateMap(complexity);
+      
+      log(`Starting batch test: ${pathsPerFrame} paths per frame, ${complexity} map...`);
+      
+      stats.pathTimes = [];
+      stats.frameTimes = [];
+      stats.frameTimeHistory = [];
+      stats.pathsComputed = 0;
+      
+      const frames = 120; // 2 seconds at 60fps
+      
+      for (let frame = 0; frame < frames && running; frame++) {
+        const frameStart = performance.now();
+        
+        for (let p = 0; p < pathsPerFrame; p++) {
+          // Random start and end points from anywhere walkable
+          const start = getRandomWalkablePosition();
+          const end = getRandomWalkablePosition();
+          
+          const result = timedFindPath(start.x, start.y, end.x, end.y);
+          stats.pathTimes.push(result.time);
+          stats.pathsComputed++;
+        }
+        
+        const frameTime = performance.now() - frameStart;
+        stats.frameTimes.push(frameTime);
+        stats.frameTimeHistory.push(frameTime);
+        
+        document.getElementById('progressFill').style.width = `${((frame + 1) / frames) * 100}%`;
+        
+        updateStats();
+        drawGrid();
+        drawFrameTimeChart();
+        drawHistogram();
+        
+        await new Promise(r => setTimeout(r, 0));
+      }
+      
+      const avgPath = stats.pathTimes.reduce((a, b) => a + b, 0) / stats.pathTimes.length;
+      const avgFrame = stats.frameTimes.reduce((a, b) => a + b, 0) / stats.frameTimes.length;
+      const min = Math.min(...stats.pathTimes);
+      const max = Math.max(...stats.pathTimes);
+      
+      log(`Batch test complete: ${stats.pathsComputed} paths over ${frames} frames`);
+      log(`  Avg path: ${avgPath.toFixed(3)}ms, Avg frame: ${avgFrame.toFixed(3)}ms`);
+      
+      const status = avgFrame < PATHFINDING_BUDGET_MS ? 'ok' : (avgFrame < FRAME_BUDGET_MS ? 'tight' : 'exceeded');
+      addResult(`Batch (${pathsPerFrame}/frame)`, '-', stats.pathsComputed, avgPath, min, max, 
+        Math.floor(PATHFINDING_BUDGET_MS / avgPath), status);
+    }
+    
+    async function runStressTest() {
+      const complexity = document.getElementById('mapComplexity').value;
+      generateMap(complexity);
+      
+      log(`Starting stress test to find pathfinding limit...`);
+      
+      stats.pathTimes = [];
+      stats.frameTimes = [];
+      stats.frameTimeHistory = [];
+      stats.pathsComputed = 0;
+      
+      let pathsPerFrame = 1;
+      let foundLimit = false;
+      let safeLimit = 0;
+      
+      while (!foundLimit && running && pathsPerFrame < 200) {
+        const testFrames = 30;
+        const frameTimes = [];
+        
+        for (let frame = 0; frame < testFrames && running; frame++) {
+          const frameStart = performance.now();
+          
+          for (let p = 0; p < pathsPerFrame; p++) {
+            // Random start and end points from anywhere walkable
+            const start = getRandomWalkablePosition();
+            const end = getRandomWalkablePosition();
+            
+            const result = timedFindPath(start.x, start.y, end.x, end.y);
+            stats.pathTimes.push(result.time);
+            stats.pathsComputed++;
+          }
+          
+          const frameTime = performance.now() - frameStart;
+          frameTimes.push(frameTime);
+          stats.frameTimeHistory.push(frameTime);
+        }
+        
+        const avgFrame = frameTimes.reduce((a, b) => a + b, 0) / frameTimes.length;
+        
+        log(`  ${pathsPerFrame} paths/frame: ${avgFrame.toFixed(2)}ms avg`);
+        
+        if (avgFrame < PATHFINDING_BUDGET_MS) {
+          safeLimit = pathsPerFrame;
+        }
+        
+        if (avgFrame > FRAME_BUDGET_MS) {
+          foundLimit = true;
+          log(`  ⚠️ Frame budget exceeded at ${pathsPerFrame} paths/frame`);
+        } else {
+          pathsPerFrame = Math.ceil(pathsPerFrame * 1.5);
+        }
+        
+        updateStats();
+        drawGrid();
+        drawFrameTimeChart();
+        drawHistogram();
+        
+        await new Promise(r => setTimeout(r, 100));
+      }
+      
+      const avgPath = stats.pathTimes.reduce((a, b) => a + b, 0) / stats.pathTimes.length;
+      
+      log(`\nStress test complete!`);
+      log(`  Safe limit: ${safeLimit} paths/frame (within ${PATHFINDING_BUDGET_MS}ms budget)`);
+      log(`  Hard limit: ~${pathsPerFrame} paths/frame (exceeds ${FRAME_BUDGET_MS}ms frame budget)`);
+      log(`  Avg path time: ${avgPath.toFixed(3)}ms`);
+      
+      addResult(`Stress Test (${complexity})`, '-', stats.pathsComputed, avgPath, 
+        Math.min(...stats.pathTimes), Math.max(...stats.pathTimes), safeLimit, 'complete');
+    }
+    
+    async function runRealtimeSimulation() {
+      const complexity = document.getElementById('mapComplexity').value;
+      const entityCount = parseInt(document.getElementById('entityCount').value);
+      const pathsPerFrame = parseInt(document.getElementById('pathsPerFrame').value);
+      
+      generateMap(complexity);
+      
+      log(`Starting realtime simulation: ${entityCount} entities, ${pathsPerFrame} paths/frame...`);
+      
+      // Create entities at random walkable positions
+      entities = [];
+      for (let i = 0; i < entityCount; i++) {
+        const pos = getRandomWalkablePosition();
+        entities.push(new Entity(pos.x, pos.y));
+      }
+      
+      stats.entities = entityCount;
+      stats.pathTimes = [];
+      stats.frameTimes = [];
+      stats.frameTimeHistory = [];
+      stats.pathsComputed = 0;
+      
+      let lastTime = performance.now();
+      let frame = 0;
+      
+      function simulate() {
+        if (!running) return;
+        
+        const frameStart = performance.now();
+        const dt = frameStart - lastTime;
+        lastTime = frameStart;
+        
+        // Update entities
+        for (const ent of entities) {
+          ent.update();
+        }
+        
+        // Compute paths for entities that need them (limited per frame)
+        let pathsThisFrame = 0;
+        for (const ent of entities) {
+          if (pathsThisFrame >= pathsPerFrame) break;
+          if (!ent.needsPath) continue;
+          
+          // Random destination from anywhere walkable on the map
+          const dest = getRandomWalkablePosition();
+          
+          const result = timedFindPath(Math.floor(ent.x), Math.floor(ent.y), dest.x, dest.y);
+          stats.pathTimes.push(result.time);
+          stats.pathsComputed++;
+          pathsThisFrame++;
+          
+          if (result.path.length > 0) {
+            ent.path = expandPath(result.path, ent.x, ent.y);
+            ent.needsPath = false;
+          }
+        }
+        
+        const frameTime = performance.now() - frameStart;
+        stats.frameTimes.push(frameTime);
+        stats.frameTimeHistory.push(frameTime);
+        if (stats.frameTimeHistory.length > 200) stats.frameTimeHistory.shift();
+        if (stats.frameTimes.length > 120) stats.frameTimes.shift();
+        
+        // Draw
+        drawGrid();
+        drawEntities();
+        drawFrameTimeChart();
+        drawHistogram();
+        
+        if (frame % 10 === 0) {
+          updateStats();
+        }
+        
+        frame++;
+        animationId = requestAnimationFrame(simulate);
+      }
+      
+      simulate();
+    }
+    
+    // ---- Results Table ----
+    function addResult(test, entityCount, pathCount, avgTime, minTime, maxTime, safePerFrame, status = 'ok') {
+      const tbody = document.getElementById('resultsBody');
+      const row = document.createElement('tr');
+      
+      const statusClass = status === 'ok' || status === 'complete' ? 'budget-ok' : 
+        (status === 'tight' ? 'budget-tight' : 'budget-exceeded');
+      const statusText = status === 'ok' ? 'OK' : (status === 'tight' ? 'Tight' : 
+        (status === 'exceeded' ? 'Exceeded' : 'Complete'));
+      
+      row.innerHTML = `
+        <td>${test}</td>
+        <td>${entityCount}</td>
+        <td>${pathCount}</td>
+        <td>${avgTime.toFixed(3)}ms</td>
+        <td>${minTime.toFixed(3)} / ${maxTime.toFixed(3)}ms</td>
+        <td>${safePerFrame}</td>
+        <td><span class="budget-indicator ${statusClass}">${statusText}</span></td>
+      `;
+      tbody.insertBefore(row, tbody.firstChild);
+    }
+    
+    // ---- Controls ----
+    document.getElementById('startTest').addEventListener('click', async () => {
+      if (running) return;
+      
+      running = true;
+      document.getElementById('startTest').disabled = true;
+      document.getElementById('stopTest').disabled = false;
+      document.getElementById('progressFill').style.width = '0%';
+      
+      stats.pathTimes = [];
+      stats.frameTimes = [];
+      stats.frameTimeHistory = [];
+      stats.pathsComputed = 0;
+      
+      const mode = document.getElementById('testMode').value;
+      
+      try {
+        switch (mode) {
+          case 'single':
+            await runSinglePathBenchmark();
+            break;
+          case 'batch':
+            await runBatchTest();
+            break;
+          case 'stress':
+            await runStressTest();
+            break;
+          case 'realtime':
+            await runRealtimeSimulation();
+            return; // Don't stop - runs until user stops
+        }
+      } catch (e) {
+        log(`Error: ${e.message}`);
+      }
+      
+      stopTest();
+    });
+    
+    function stopTest() {
+      running = false;
+      if (animationId) {
+        cancelAnimationFrame(animationId);
+        animationId = null;
+      }
+      document.getElementById('startTest').disabled = false;
+      document.getElementById('stopTest').disabled = true;
+      entities = [];
+      stats.entities = 0;
+      updateStats();
+    }
+    
+    document.getElementById('stopTest').addEventListener('click', stopTest);
+    
+    // ---- Initial Setup ----
+    generateMap('simple');
+    drawGrid();
+    updateStats();
+    
+    log('Performance test ready.');
+    log(`Target: 60 FPS (${FRAME_BUDGET_MS.toFixed(2)}ms per frame)`);
+    log(`Pathfinding budget: ${PATHFINDING_BUDGET_MS}ms (assuming ${FRAME_BUDGET_MS - PATHFINDING_BUDGET_MS}ms for other work)`);
+    log('');
+    log('Test modes:');
+    log('  • Single Path: Benchmark individual pathfinding calls');
+    log('  • Batch: Test multiple paths per frame');
+    log('  • Stress Test: Find the limit of paths per frame');
+    log('  • Realtime: Simulate entities moving with pathfinding');
+  </script>
+</body>
+</html>
