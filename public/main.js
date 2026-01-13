@@ -412,6 +412,75 @@ async function init() {
     );
   }
 
+  // ---- Binary Heap Priority Queue (O(log n) operations) ----
+  // Uses lazy deletion - nodes may be re-added with better priority
+  class BinaryHeap {
+    constructor() {
+      this.nodes = [];
+    }
+
+    get size() {
+      return this.nodes.length;
+    }
+
+    push(key, priority, data) {
+      const node = { key, priority, data };
+      this.nodes.push(node);
+      this._bubbleUp(this.nodes.length - 1);
+    }
+
+    pop() {
+      if (this.nodes.length === 0) return null;
+      const min = this.nodes[0];
+      const last = this.nodes.pop();
+      if (this.nodes.length > 0) {
+        this.nodes[0] = last;
+        this._sinkDown(0);
+      }
+      return min;
+    }
+
+    _bubbleUp(i) {
+      const node = this.nodes[i];
+      const priority = node.priority;
+      while (i > 0) {
+        const parentI = (i - 1) >> 1;
+        const parent = this.nodes[parentI];
+        if (priority >= parent.priority) break;
+        this.nodes[i] = parent;
+        i = parentI;
+      }
+      this.nodes[i] = node;
+    }
+
+    _sinkDown(i) {
+      const length = this.nodes.length;
+      const node = this.nodes[i];
+      const priority = node.priority;
+      while (true) {
+        const left = (i << 1) + 1;
+        const right = left + 1;
+        let smallest = i;
+        let smallestPriority = priority;
+        if (left < length && this.nodes[left].priority < smallestPriority) {
+          smallest = left;
+          smallestPriority = this.nodes[left].priority;
+        }
+        if (right < length && this.nodes[right].priority < smallestPriority) {
+          smallest = right;
+        }
+        if (smallest === i) break;
+        this.nodes[i] = this.nodes[smallest];
+        i = smallest;
+      }
+      this.nodes[i] = node;
+    }
+  }
+
+  // ---- Integer key encoding (avoids string allocation) ----
+  const nodeKey = (x, y) => y * GRID_W + x;
+  const keyToXY = (key) => ({ x: key % GRID_W, y: Math.floor(key / GRID_W) });
+
   // ---- Walkable Surface Detection ----
   // A cell is walkable if it's empty (or a support cell) AND has a solid cell directly below it
   function isWalkable(x, y) {
@@ -594,7 +663,7 @@ async function init() {
     return moves;
   }
 
-  // ---- A* Pathfinding ----
+  // ---- A* Pathfinding (Optimized with Binary Heap + Integer Keys) ----
   findPath = function(startX, startY, endX, endY) {
     // Clamp to grid
     startX = Math.max(0, Math.min(GRID_W - 1, startX));
@@ -613,47 +682,19 @@ async function init() {
       console.log('  No walkable start or end found');
       return [];
     }
-    
-    // Debug: check if direct fall is possible
-    if (end.y > start.y) {
-      const dy = end.y - start.y;
-      const dx = end.x - start.x;
-      console.log(`  Fall distance: ${dy}, horizontal: ${dx}`);
-      console.log(`  isWalkable(end): ${isWalkable(end.x, end.y)}`);
-      console.log(`  canTraverse direct: ${canTraverse(start.x, start.y, end.x, end.y)}`);
-    }
 
-    const key = (x, y) => `${x},${y}`;
-    const openSet = new Map();
+    const endKey = nodeKey(end.x, end.y);
+    
+    // Node data stored in single Map for cache locality
+    // Each node: { g: number, parent: number|null }
+    const nodes = new Map();
     const closedSet = new Set();
-    const cameFrom = new Map();
-    const gScore = new Map();
-    const fScore = new Map();
+    const openSet = new BinaryHeap();
 
-    const startKey = key(start.x, start.y);
-    gScore.set(startKey, 0);
-    fScore.set(startKey, heuristic(start.x, start.y, end.x, end.y));
-    openSet.set(startKey, start);
-
-    // Debug: Check if walking is possible from start
-    const walkMoves = [[-1, 0], [1, 0], [0, -1], [0, 1]];
-    console.log(`  Walkable neighbors from start:`);
-    for (const [dx, dy] of walkMoves) {
-      const nx = start.x + dx;
-      const ny = start.y + dy;
-      const walkable = isWalkable(nx, ny);
-      const canTrav = canTraverse(start.x, start.y, nx, ny);
-      if (walkable || canTrav) {
-        console.log(`    (${nx}, ${ny}): walkable=${walkable}, canTraverse=${canTrav}`);
-      }
-    }
-    
-    // Debug: Check fall options from start
-    const fallMoves = getPossibleMoves(start.x, start.y).filter(([dx, dy]) => dy > 1);
-    console.log(`  Fall options from start: ${fallMoves.length}`);
-    if (fallMoves.length > 0 && fallMoves.length <= 10) {
-      console.log(`  First few falls: ${JSON.stringify(fallMoves.slice(0, 5))}`);
-    }
+    const startKey = nodeKey(start.x, start.y);
+    const startH = heuristic(start.x, start.y, end.x, end.y);
+    nodes.set(startKey, { g: 0, parent: null });
+    openSet.push(startKey, startH, { x: start.x, y: start.y });
 
     let iterations = 0;
     const maxIterations = GRID_W * GRID_H * 2;
@@ -661,59 +702,61 @@ async function init() {
     while (openSet.size > 0 && iterations < maxIterations) {
       iterations++;
 
-      // Get node with lowest fScore
-      let current = null;
-      let currentKey = null;
-      let lowestF = Infinity;
-      for (const [k, node] of openSet) {
-        const f = fScore.get(k) || Infinity;
-        if (f < lowestF) {
-          lowestF = f;
-          current = node;
-          currentKey = k;
-        }
-      }
+      // Get node with lowest fScore - O(log n) with heap
+      const current = openSet.pop();
+      if (!current) break;
+      
+      const currentKey = current.key;
+      const cx = current.data.x;
+      const cy = current.data.y;
 
-      if (!current) break; // No valid node found
+      // Skip if already processed (can happen with lazy deletion)
+      if (closedSet.has(currentKey)) continue;
 
-      if (current.x === end.x && current.y === end.y) {
-        // Reconstruct path
+      // Check if we reached the goal
+      if (currentKey === endKey) {
+        // Reconstruct path using integer keys
         const path = [];
         let ck = currentKey;
-        while (cameFrom.has(ck)) {
-          const [px, py] = ck.split(',').map(Number);
-          path.unshift({ x: px, y: py });
-          ck = cameFrom.get(ck);
+        while (ck !== null && nodes.has(ck)) {
+          const { x, y } = keyToXY(ck);
+          path.unshift({ x, y });
+          ck = nodes.get(ck).parent;
         }
+        // Remove start position from path (entity is already there)
+        if (path.length > 0) path.shift();
         return path;
       }
 
-      openSet.delete(currentKey);
       closedSet.add(currentKey);
+      const currentG = nodes.get(currentKey).g;
 
       // Get all possible moves including jumps from current position
-      const moves = getPossibleMoves(current.x, current.y);
+      const moves = getPossibleMoves(cx, cy);
       
       for (const [dx, dy] of moves) {
-        const nx = current.x + dx;
-        const ny = current.y + dy;
-        const nk = key(nx, ny);
+        const nx = cx + dx;
+        const ny = cy + dy;
+        const nk = nodeKey(nx, ny);
 
         if (closedSet.has(nk)) continue;
-        if (!canTraverse(current.x, current.y, nx, ny)) continue;
+        if (!canTraverse(cx, cy, nx, ny)) continue;
 
-        const tentativeG = (gScore.get(currentKey) || 0) + 
-          getTraversalCost(current.x, current.y, nx, ny);
+        const tentativeG = currentG + getTraversalCost(cx, cy, nx, ny);
+        const existingNode = nodes.get(nk);
 
-        if (!openSet.has(nk)) {
-          openSet.set(nk, { x: nx, y: ny });
-        } else if (tentativeG >= (gScore.get(nk) || Infinity)) {
-          continue;
+        if (!existingNode) {
+          // New node - add to open set
+          const h = heuristic(nx, ny, end.x, end.y);
+          nodes.set(nk, { g: tentativeG, parent: currentKey });
+          openSet.push(nk, tentativeG + h, { x: nx, y: ny });
+        } else if (tentativeG < existingNode.g) {
+          // Found better path - update node and re-add to heap (lazy deletion)
+          existingNode.g = tentativeG;
+          existingNode.parent = currentKey;
+          const h = heuristic(nx, ny, end.x, end.y);
+          openSet.push(nk, tentativeG + h, { x: nx, y: ny });
         }
-
-        cameFrom.set(nk, currentKey);
-        gScore.set(nk, tentativeG);
-        fScore.set(nk, tentativeG + heuristic(nx, ny, end.x, end.y));
       }
     }
 
