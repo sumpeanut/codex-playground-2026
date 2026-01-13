@@ -226,6 +226,10 @@
         <div class="stat-label">Paths/Frame Budget</div>
         <div class="stat-value" id="statBudget">-</div>
       </div>
+      <div class="stat-card">
+        <div class="stat-label">Main Thread Blocked</div>
+        <div class="stat-value"><span id="statBlocked">0</span><span class="stat-unit">ms</span></div>
+      </div>
     </div>
     
     <div class="controls">
@@ -256,6 +260,14 @@
           <option value="medium">Medium (platforms)</option>
           <option value="complex">Complex (maze-like)</option>
           <option value="worst">Worst Case (many obstacles)</option>
+        </select>
+      </div>
+      
+      <div class="control-group">
+        <label>Pathfinding Mode</label>
+        <select id="pathfindingMode">
+          <option value="sync">Synchronous (blocks main thread)</option>
+          <option value="worker">Web Worker (async)</option>
         </select>
       </div>
       
@@ -351,6 +363,78 @@
     
     // Entities for realtime simulation
     let entities = [];
+    
+    // ---- Web Worker for async pathfinding ----
+    let pathWorker = null;
+    let pathRequestId = 0;
+    const pendingPathRequests = new Map();
+    let workerReady = false;
+    let totalBlockedTime = 0;
+    
+    function initPathWorker() {
+      pathWorker = new Worker('./pathfinding-worker.js');
+      
+      pathWorker.onmessage = function(e) {
+        const { type, data } = e.data;
+        
+        switch (type) {
+          case 'ready':
+            workerReady = true;
+            log('Pathfinding worker ready');
+            break;
+            
+          case 'pathResult':
+            const { requestId, path } = data;
+            const pending = pendingPathRequests.get(requestId);
+            if (pending) {
+              pending.resolve({ path, time: performance.now() - pending.startTime });
+              pendingPathRequests.delete(requestId);
+            }
+            break;
+        }
+      };
+      
+      // Initialize worker with grid data
+      pathWorker.postMessage({
+        type: 'init',
+        data: {
+          gridW: GRID_W,
+          gridH: GRID_H,
+          cells: cpuCells.buffer.slice(0)
+        }
+      });
+    }
+    
+    function updateWorkerCells() {
+      if (pathWorker && workerReady) {
+        pathWorker.postMessage({
+          type: 'updateCells',
+          data: { cells: cpuCells.buffer.slice(0) }
+        });
+      }
+    }
+    
+    function requestPathAsync(startX, startY, endX, endY) {
+      return new Promise((resolve) => {
+        if (!pathWorker || !workerReady) {
+          resolve({ path: [], time: 0 });
+          return;
+        }
+        
+        const requestId = pathRequestId++;
+        const startTime = performance.now();
+        pendingPathRequests.set(requestId, { resolve, startTime });
+        
+        pathWorker.postMessage({
+          type: 'findPath',
+          data: { requestId, startX, startY, endX, endY }
+        });
+      });
+    }
+    
+    function useWorkerMode() {
+      return document.getElementById('pathfindingMode').value === 'worker';
+    }
     
     // ---- Logging ----
     let logText = '';
@@ -830,6 +914,7 @@
         this.color = `hsl(${Math.random() * 360}, 70%, 60%)`;
         this.moveProgress = 0;
         this.needsPath = true;
+        this.pathPending = false; // For async worker mode
       }
       
       update() {
@@ -1003,6 +1088,11 @@
       const safePathsPerFrame = avgTime > 0 ? Math.floor(PATHFINDING_BUDGET_MS / avgTime) : '-';
       const budgetEl = document.getElementById('statBudget');
       budgetEl.textContent = safePathsPerFrame;
+      
+      // Show blocked time (only relevant for sync mode)
+      const blockedEl = document.getElementById('statBlocked');
+      blockedEl.textContent = totalBlockedTime.toFixed(1);
+      blockedEl.className = totalBlockedTime < 10 ? 'stat-good' : (totalBlockedTime < 100 ? 'stat-warn' : 'stat-bad');
     }
     
     // ---- Test Modes ----
@@ -1178,10 +1268,28 @@
       const complexity = document.getElementById('mapComplexity').value;
       const entityCount = parseInt(document.getElementById('entityCount').value);
       const pathsPerFrame = parseInt(document.getElementById('pathsPerFrame').value);
+      const useWorker = useWorkerMode();
       
       generateMap(complexity);
       
-      log(`Starting realtime simulation: ${entityCount} entities, ${pathsPerFrame} paths/frame...`);
+      // Initialize worker if using worker mode
+      if (useWorker && !pathWorker) {
+        initPathWorker();
+        // Wait for worker to be ready
+        await new Promise(resolve => {
+          const check = () => {
+            if (workerReady) resolve();
+            else setTimeout(check, 50);
+          };
+          check();
+        });
+        updateWorkerCells();
+      } else if (useWorker) {
+        updateWorkerCells();
+      }
+      
+      const modeLabel = useWorker ? '(Web Worker)' : '(Sync - blocks main thread)';
+      log(`Starting realtime simulation ${modeLabel}: ${entityCount} entities, ${pathsPerFrame} paths/frame...`);
       
       // Create entities at random walkable positions
       entities = [];
@@ -1195,9 +1303,11 @@
       stats.frameTimes = [];
       stats.frameTimeHistory = [];
       stats.pathsComputed = 0;
+      totalBlockedTime = 0;
       
       let lastTime = performance.now();
       let frame = 0;
+      let pendingWorkerPaths = 0;
       
       function simulate() {
         if (!running) return;
@@ -1215,19 +1325,42 @@
         let pathsThisFrame = 0;
         for (const ent of entities) {
           if (pathsThisFrame >= pathsPerFrame) break;
-          if (!ent.needsPath) continue;
+          if (!ent.needsPath || ent.pathPending) continue;
           
           // Random destination from anywhere walkable on the map
           const dest = getRandomWalkablePosition();
           
-          const result = timedFindPath(Math.floor(ent.x), Math.floor(ent.y), dest.x, dest.y);
-          stats.pathTimes.push(result.time);
-          stats.pathsComputed++;
-          pathsThisFrame++;
-          
-          if (result.path.length > 0) {
-            ent.path = expandPath(result.path, ent.x, ent.y);
-            ent.needsPath = false;
+          if (useWorker) {
+            // Async worker mode - doesn't block
+            ent.pathPending = true;
+            pendingWorkerPaths++;
+            requestPathAsync(Math.floor(ent.x), Math.floor(ent.y), dest.x, dest.y)
+              .then(result => {
+                stats.pathTimes.push(result.time);
+                stats.pathsComputed++;
+                pendingWorkerPaths--;
+                ent.pathPending = false;
+                
+                if (result.path.length > 0) {
+                  ent.path = expandPath(result.path, ent.x, ent.y);
+                  ent.needsPath = false;
+                }
+              });
+            pathsThisFrame++;
+          } else {
+            // Sync mode - blocks main thread
+            const blockStart = performance.now();
+            const result = timedFindPath(Math.floor(ent.x), Math.floor(ent.y), dest.x, dest.y);
+            totalBlockedTime += performance.now() - blockStart;
+            
+            stats.pathTimes.push(result.time);
+            stats.pathsComputed++;
+            pathsThisFrame++;
+            
+            if (result.path.length > 0) {
+              ent.path = expandPath(result.path, ent.x, ent.y);
+              ent.needsPath = false;
+            }
           }
         }
         

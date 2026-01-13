@@ -49,11 +49,77 @@ resizeCanvas();
 const state = { mx: 0, my: 0, mdown: 0, repair: 0, frame: 0 };
 const overlayCtx = overlay.getContext("2d");
 
+// ---- Pathfinding Worker ----
+let pathWorker = null;
+let pathRequestId = 0;
+const pendingPathRequests = new Map();
+let workerReady = false;
+
+function initPathWorker(cpuCells) {
+  pathWorker = new Worker('./pathfinding-worker.js');
+  
+  pathWorker.onmessage = function(e) {
+    const { type, data } = e.data;
+    
+    switch (type) {
+      case 'ready':
+        workerReady = true;
+        console.log('Pathfinding worker ready');
+        break;
+        
+      case 'pathResult':
+        const { requestId, path } = data;
+        const pending = pendingPathRequests.get(requestId);
+        if (pending) {
+          pending.resolve(path);
+          pendingPathRequests.delete(requestId);
+        }
+        break;
+    }
+  };
+  
+  // Initialize worker with grid data
+  pathWorker.postMessage({
+    type: 'init',
+    data: {
+      gridW: GRID_W,
+      gridH: GRID_H,
+      cells: cpuCells.buffer.slice(0)
+    }
+  }, [cpuCells.buffer.slice(0)]);
+}
+
+function updateWorkerCells(cpuCells) {
+  if (pathWorker && workerReady) {
+    pathWorker.postMessage({
+      type: 'updateCells',
+      data: { cells: cpuCells.buffer.slice(0) }
+    });
+  }
+}
+
+function requestPathAsync(startX, startY, endX, endY) {
+  return new Promise((resolve) => {
+    if (!pathWorker || !workerReady) {
+      resolve([]);
+      return;
+    }
+    
+    const requestId = pathRequestId++;
+    pendingPathRequests.set(requestId, { resolve });
+    
+    pathWorker.postMessage({
+      type: 'findPath',
+      data: { requestId, startX, startY, endX, endY }
+    });
+  });
+}
+
 // ---- Entity System ----
 const entities = [];
 let selectedEntity = null;
 let entityIdCounter = 0;
-let findPath = null; // Will be set inside init() when pathfinding is ready
+let findPath = null; // Synchronous fallback - will be set inside init()
 let expandPath = null; // Will be set inside init()
 
 function createEntity(x, y) {
@@ -95,18 +161,34 @@ canvas.addEventListener("pointerdown", (e) => {
 
     if (clickedEntity) {
       selectedEntity = clickedEntity;
-    } else if (selectedEntity && findPath) {
+    } else if (selectedEntity && workerReady) {
       // Debug: log pathfinding attempt
       console.log(`Pathfinding from (${Math.floor(selectedEntity.x)}, ${Math.floor(selectedEntity.y)}) to (${gridX}, ${gridY})`);
       
-      // Move selected entity to clicked position (pathfinding)
+      // Move selected entity to clicked position (async pathfinding via worker)
+      const entityToMove = selectedEntity;
+      requestPathAsync(
+        Math.floor(entityToMove.x), Math.floor(entityToMove.y),
+        gridX, gridY
+      ).then(path => {
+        console.log(`Path found: ${path.length} steps`);
+        if (path.length > 0) {
+          // Expand path for smooth movement on jumps/falls
+          entityToMove.path = expandPath(path, entityToMove.x, entityToMove.y);
+          entityToMove.moveProgress = 0;
+        } else {
+          console.log('No path found!');
+        }
+      });
+    } else if (selectedEntity && findPath) {
+      // Fallback to synchronous pathfinding if worker not ready
+      console.log(`Pathfinding (sync) from (${Math.floor(selectedEntity.x)}, ${Math.floor(selectedEntity.y)}) to (${gridX}, ${gridY})`);
       const path = findPath(
         Math.floor(selectedEntity.x), Math.floor(selectedEntity.y),
         gridX, gridY
       );
       console.log(`Path found: ${path.length} steps`);
       if (path.length > 0) {
-        // Expand path for smooth movement on jumps/falls
         selectedEntity.path = expandPath(path, selectedEntity.x, selectedEntity.y);
         selectedEntity.moveProgress = 0;
       } else {
@@ -338,6 +420,9 @@ async function init() {
     readbackBuffer.unmap();
     quadState.readbackInFlight = false;
     rebuildQuadTree();
+    
+    // Update pathfinding worker with new cell data
+    updateWorkerCells(cpuCells);
   }
 
   function buildQuadTree(x, y, w, h, maxDepth, depth = 0) {
@@ -1052,6 +1137,11 @@ async function init() {
     
     requestAnimationFrame(frame);
   }
+
+  // Initialize pathfinding worker after first readback
+  requestGpuReadback().then(() => {
+    initPathWorker(cpuCells);
+  });
 
   requestAnimationFrame(frame);
 }
