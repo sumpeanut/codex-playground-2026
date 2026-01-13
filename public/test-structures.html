@@ -1,0 +1,706 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Structure Stability Test</title>
+    <style>
+      html, body { margin: 0; height: 100%; background: #111; color: #ddd; font-family: system-ui, sans-serif; }
+      #ui { position: fixed; left: 12px; top: 12px; background: rgba(0,0,0,.75); padding: 14px 16px; border-radius: 10px; max-width: 320px; max-height: 90vh; overflow-y: auto; }
+      canvas { width: 100vw; height: 100vh; display: block; image-rendering: pixelated; }
+      #overlay { position: fixed; inset: 0; pointer-events: none; }
+      .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
+      input[type="range"] { width: 140px; }
+      button { cursor: pointer; padding: 4px 10px; }
+      kbd { background: #222; padding: 1px 6px; border-radius: 6px; border: 1px solid #333; }
+      .section { margin-top: 12px; padding-top: 8px; border-top: 1px solid #333; }
+      .section-title { font-weight: bold; color: #8cf; margin-bottom: 6px; }
+      .small { font-size: 12px; opacity: .85; margin-top: 8px; line-height: 1.4; }
+      .test-btn { margin: 2px; font-size: 11px; }
+      .info-box { background: #1a1a2a; padding: 8px; border-radius: 6px; margin-top: 8px; font-size: 11px; line-height: 1.4; }
+      .legend { display: flex; gap: 12px; flex-wrap: wrap; margin-top: 6px; }
+      .legend-item { display: flex; align-items: center; gap: 4px; font-size: 11px; }
+      .legend-color { width: 16px; height: 16px; border-radius: 3px; }
+    </style>
+  </head>
+  <body>
+    <div id="ui">
+      <div><b>🧪 Structure Stability Test</b></div>
+
+      <div class="section">
+        <div class="section-title">Brush Settings</div>
+        <div class="row">
+          <span>Radius</span>
+          <input id="radius" type="range" min="2" max="40" value="8" />
+          <span id="radiusVal"></span>
+        </div>
+        <div class="row">
+          <span>Damage</span>
+          <input id="damage" type="range" min="1" max="255" value="80" />
+          <span id="damageVal"></span>
+        </div>
+        <div class="row">
+          <span>Bond weaken</span>
+          <input id="bondWeaken" type="range" min="0" max="255" value="70" />
+          <span id="bondWeakenVal"></span>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Physics Tuning</div>
+        <div class="row">
+          <span>Relax iters</span>
+          <input id="relaxIters" type="range" min="0" max="12" value="4" />
+          <span id="relaxItersVal"></span>
+        </div>
+        <div class="row">
+          <label><input id="paused" type="checkbox" /> Pause simulation</label>
+        </div>
+        <div class="row">
+          <button id="stepOnce">Step Once</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Test Structures</div>
+        <div class="row" style="flex-wrap: wrap;">
+          <button class="test-btn" id="testUnsupported">Unsupported Beam</button>
+          <button class="test-btn" id="testSupported">Supported Beam</button>
+          <button class="test-btn" id="testCantilever">Cantilever</button>
+          <button class="test-btn" id="testArch">Arch</button>
+          <button class="test-btn" id="testTower">Tower</button>
+          <button class="test-btn" id="testBuilding">Building</button>
+          <button class="test-btn" id="testBridge">Bridge</button>
+          <button class="test-btn" id="testStable">Stable Building</button>
+        </div>
+        <div class="row">
+          <button id="reset">Clear All</button>
+        </div>
+      </div>
+
+      <div class="section">
+        <div class="section-title">Visualization</div>
+        <div class="row">
+          <label><input id="showBonds" type="checkbox" checked /> Show bond strengths</label>
+        </div>
+        <div class="legend">
+          <div class="legend-item"><div class="legend-color" style="background: #d0dbe8;"></div> Solid</div>
+          <div class="legend-item"><div class="legend-color" style="background: #5a4a3a;"></div> Support</div>
+          <div class="legend-item"><div class="legend-color" style="background: #0f0;"></div> Strong bond</div>
+          <div class="legend-item"><div class="legend-color" style="background: #f00;"></div> Weak bond</div>
+        </div>
+      </div>
+
+      <div class="info-box">
+        <b>How Stability Works:</b><br><br>
+        
+        <b>Bonds:</b> Each cell has horizontal &amp; vertical bonds to neighbors (0-255).<br>
+        - Bonds start at 255 (max strength)<br>
+        - Damage weakens nearby bonds<br>
+        - When both cells of a bond are destroyed, bond decays<br><br>
+        
+        <b>Falling Rules:</b><br>
+        - Cell falls if: empty below AND vertical bond &lt; SUPPORT_TH (40)<br>
+        - Cell stays if: strongly bonded (≥COHESION_TH=120) to neighbor that can't fall<br><br>
+        
+        <b>Key Insight:</b> Horizontal beams stay up because:<br>
+        1. All cells have bonds at 255 (well above thresholds)<br>
+        2. As long as ONE cell in a bonded chain has support, all stay<br>
+        3. Support cells create vertical bond chains to ground<br><br>
+        
+        <b>Why things collapse:</b><br>
+        - Gap in vertical support = bond chain broken<br>
+        - Damage + bond weakening below thresholds<br>
+        - Need continuous vertical support every ~2-3 cells for wide spans
+      </div>
+
+      <div class="small">
+        Left-drag: damage cells + weaken bonds<br/>
+        Shift+drag: repair cells + strengthen bonds<br/>
+      </div>
+    </div>
+
+    <canvas id="c"></canvas>
+    <canvas id="overlay"></canvas>
+    <script type="module">
+const canvas = document.getElementById("c");
+const overlay = document.getElementById("overlay");
+
+const ui = {
+  radius: document.getElementById("radius"),
+  damage: document.getElementById("damage"),
+  bondWeaken: document.getElementById("bondWeaken"),
+  relaxIters: document.getElementById("relaxIters"),
+  radiusVal: document.getElementById("radiusVal"),
+  damageVal: document.getElementById("damageVal"),
+  bondWeakenVal: document.getElementById("bondWeakenVal"),
+  relaxItersVal: document.getElementById("relaxItersVal"),
+  reset: document.getElementById("reset"),
+  paused: document.getElementById("paused"),
+  stepOnce: document.getElementById("stepOnce"),
+  showBonds: document.getElementById("showBonds"),
+};
+
+function syncUI() {
+  ui.radiusVal.textContent = ui.radius.value;
+  ui.damageVal.textContent = ui.damage.value;
+  ui.bondWeakenVal.textContent = ui.bondWeaken.value;
+  ui.relaxItersVal.textContent = ui.relaxIters.value;
+}
+["input", "change"].forEach(ev => {
+  ui.radius.addEventListener(ev, syncUI);
+  ui.damage.addEventListener(ev, syncUI);
+  ui.bondWeaken.addEventListener(ev, syncUI);
+  ui.relaxIters.addEventListener(ev, syncUI);
+});
+syncUI();
+
+if (!navigator.gpu) throw new Error("WebGPU not supported.");
+
+const GRID_W = 160;
+const GRID_H = 100;
+
+const dpr = window.devicePixelRatio || 1;
+function resizeCanvas() {
+  const rect = canvas.getBoundingClientRect();
+  canvas.width = Math.max(1, Math.floor(rect.width * dpr));
+  canvas.height = Math.max(1, Math.floor(rect.height * dpr));
+  overlay.width = canvas.width;
+  overlay.height = canvas.height;
+}
+window.addEventListener("resize", resizeCanvas);
+resizeCanvas();
+
+const state = { mx: 0, my: 0, mdown: 0, repair: 0, frame: 0, stepOnce: false };
+const overlayCtx = overlay.getContext("2d");
+
+canvas.addEventListener("pointerdown", (e) => {
+  canvas.setPointerCapture(e.pointerId);
+  state.mdown = 1;
+  state.repair = e.shiftKey ? 1 : 0;
+  setMouse(e);
+});
+canvas.addEventListener("pointerup", () => { state.mdown = 0; });
+canvas.addEventListener("pointermove", (e) => {
+  state.repair = e.shiftKey ? 1 : 0;
+  setMouse(e);
+});
+
+function setMouse(e) {
+  const rect = canvas.getBoundingClientRect();
+  const nx = (e.clientX - rect.left) / rect.width;
+  const ny = (e.clientY - rect.top) / rect.height;
+  state.mx = Math.max(0, Math.min(GRID_W - 1, Math.floor(nx * GRID_W)));
+  state.my = Math.max(0, Math.min(GRID_H - 1, Math.floor(ny * GRID_H)));
+}
+
+ui.stepOnce.addEventListener("click", () => {
+  state.stepOnce = true;
+});
+
+async function init() {
+  const adapter = await navigator.gpu.requestAdapter();
+  if (!adapter) throw new Error("No WebGPU adapter found.");
+  const device = await adapter.requestDevice();
+
+  const context = canvas.getContext("webgpu");
+  const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
+  context.configure({ device, format: presentationFormat, alphaMode: "opaque" });
+
+  const wgsl = await (await fetch("./shaders.wgsl")).text();
+  const shader = device.createShaderModule({ code: wgsl });
+
+  const cellCount = GRID_W * GRID_H;
+  const cellsBytes = cellCount * 4;
+  const cpuCells = new Uint32Array(cellCount);
+  const cpuBondsH = new Uint32Array((GRID_W - 1) * GRID_H);
+  const cpuBondsV = new Uint32Array(GRID_W * (GRID_H - 1));
+
+  const bondsHCount = (GRID_W - 1) * GRID_H;
+  const bondsVCount = GRID_W * (GRID_H - 1);
+
+  const cellsA = device.createBuffer({
+    size: cellsBytes,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+  });
+  const cellsB = device.createBuffer({
+    size: cellsBytes,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+  });
+
+  const bondsH = device.createBuffer({
+    size: bondsHCount * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+  });
+  const bondsV = device.createBuffer({
+    size: bondsVCount * 4,
+    usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST | GPUBufferUsage.COPY_SRC,
+  });
+
+  const paramsU32 = 16;
+  const paramsBuf = device.createBuffer({
+    size: paramsU32 * 4,
+    usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+  });
+
+  const visTex = device.createTexture({
+    size: { width: GRID_W, height: GRID_H },
+    format: "rgba8unorm",
+    usage: GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.TEXTURE_BINDING,
+  });
+
+  const computeBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: "uniform" } },
+      { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 2, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 3, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: "storage" } },
+      { binding: 5, visibility: GPUShaderStage.COMPUTE, storageTexture: { access: "write-only", format: "rgba8unorm" } },
+    ],
+  });
+
+  const computeBG = device.createBindGroup({
+    layout: computeBGL,
+    entries: [
+      { binding: 0, resource: { buffer: paramsBuf } },
+      { binding: 1, resource: { buffer: cellsA } },
+      { binding: 2, resource: { buffer: cellsB } },
+      { binding: 3, resource: { buffer: bondsH } },
+      { binding: 4, resource: { buffer: bondsV } },
+      { binding: 5, resource: visTex.createView() },
+    ],
+  });
+
+  const computeLayout = device.createPipelineLayout({ bindGroupLayouts: [computeBGL] });
+
+  const brushPipe = device.createComputePipeline({
+    layout: computeLayout,
+    compute: { module: shader, entryPoint: "brush" },
+  });
+  const bondsDecayPipe = device.createComputePipeline({
+    layout: computeLayout,
+    compute: { module: shader, entryPoint: "bonds_decay" },
+  });
+  const stepPipe = device.createComputePipeline({
+    layout: computeLayout,
+    compute: { module: shader, entryPoint: "step" },
+  });
+  const relaxPipe = device.createComputePipeline({
+    layout: computeLayout,
+    compute: { module: shader, entryPoint: "relax" },
+  });
+  const visPipe = device.createComputePipeline({
+    layout: computeLayout,
+    compute: { module: shader, entryPoint: "visualize" },
+  });
+
+  const renderBGL = device.createBindGroupLayout({
+    entries: [
+      { binding: 0, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+    ],
+  });
+
+  const sampler = device.createSampler({ magFilter: "nearest", minFilter: "nearest" });
+
+  const renderBG = device.createBindGroup({
+    layout: renderBGL,
+    entries: [
+      { binding: 0, resource: visTex.createView() },
+      { binding: 1, resource: sampler },
+    ],
+  });
+
+  const renderPipe = device.createRenderPipeline({
+    layout: device.createPipelineLayout({ bindGroupLayouts: [renderBGL] }),
+    vertex: { module: shader, entryPoint: "vs_fullscreen" },
+    fragment: { module: shader, entryPoint: "fs_present", targets: [{ format: presentationFormat }] },
+    primitive: { topology: "triangle-list" },
+  });
+
+  // Readback buffers for visualization
+  const readbackCells = device.createBuffer({
+    size: cellsBytes,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+  const readbackBondsH = device.createBuffer({
+    size: bondsHCount * 4,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+  const readbackBondsV = device.createBuffer({
+    size: bondsVCount * 4,
+    usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
+  });
+
+  let readbackInFlight = false;
+
+  async function readbackData() {
+    if (readbackInFlight) return;
+    readbackInFlight = true;
+    
+    const encoder = device.createCommandEncoder();
+    encoder.copyBufferToBuffer(cellsA, 0, readbackCells, 0, cellsBytes);
+    encoder.copyBufferToBuffer(bondsH, 0, readbackBondsH, 0, bondsHCount * 4);
+    encoder.copyBufferToBuffer(bondsV, 0, readbackBondsV, 0, bondsVCount * 4);
+    device.queue.submit([encoder.finish()]);
+    
+    await device.queue.onSubmittedWorkDone();
+    
+    await readbackCells.mapAsync(GPUMapMode.READ);
+    cpuCells.set(new Uint32Array(readbackCells.getMappedRange()));
+    readbackCells.unmap();
+    
+    await readbackBondsH.mapAsync(GPUMapMode.READ);
+    cpuBondsH.set(new Uint32Array(readbackBondsH.getMappedRange()));
+    readbackBondsH.unmap();
+    
+    await readbackBondsV.mapAsync(GPUMapMode.READ);
+    cpuBondsV.set(new Uint32Array(readbackBondsV.getMappedRange()));
+    readbackBondsV.unmap();
+    
+    readbackInFlight = false;
+  }
+
+  function setSolid(cells, x, y, dmg = 0, passable = false) {
+    if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
+    const p = passable ? (1 << 9) : 0;
+    cells[y * GRID_W + x] = (dmg & 0xff) | (1 << 8) | p;
+  }
+
+  function uploadWorld(cells, hBonds, vBonds) {
+    device.queue.writeBuffer(cellsA, 0, cells);
+    device.queue.writeBuffer(cellsB, 0, cells);
+    device.queue.writeBuffer(bondsH, 0, hBonds);
+    device.queue.writeBuffer(bondsV, 0, vBonds);
+    cpuCells.set(cells);
+    cpuBondsH.set(hBonds);
+    cpuBondsV.set(vBonds);
+  }
+
+  function clearWorld() {
+    const cells = new Uint32Array(cellCount);
+    const h = new Uint32Array(bondsHCount);
+    const v = new Uint32Array(bondsVCount);
+    h.fill(255);
+    v.fill(255);
+    
+    // Ground
+    for (let y = GRID_H - 6; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) setSolid(cells, x, y, 0);
+    }
+    
+    uploadWorld(cells, h, v);
+  }
+
+  // Test structure builders
+  function buildTestStructure(name) {
+    const cells = new Uint32Array(cellCount);
+    const h = new Uint32Array(bondsHCount);
+    const v = new Uint32Array(bondsVCount);
+    h.fill(255);
+    v.fill(255);
+    
+    const groundY = GRID_H - 6;
+    
+    // Ground
+    for (let y = groundY; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W; x++) setSolid(cells, x, y, 0);
+    }
+
+    function rect(x0, y0, w, height) {
+      for (let y = y0; y < y0 + height; y++) {
+        for (let x = x0; x < x0 + w; x++) setSolid(cells, x, y, 0);
+      }
+    }
+
+    function column(x0, topY, bottomY, w = 2, passable = true) {
+      for (let y = topY; y <= bottomY; y++) {
+        for (let dx = 0; dx < w; dx++) setSolid(cells, x0 + dx, y, 0, passable);
+      }
+    }
+
+    function floor(x0, y, w, thick = 2) {
+      for (let t = 0; t < thick; t++) {
+        for (let x = x0; x < x0 + w; x++) setSolid(cells, x, y + t, 0);
+      }
+    }
+
+    switch (name) {
+      case 'unsupported':
+        // A beam with no support in the middle - will collapse
+        floor(40, groundY - 20, 80, 2);
+        column(40, groundY - 20, groundY - 1, 3);
+        column(117, groundY - 20, groundY - 1, 3);
+        break;
+
+      case 'supported':
+        // Same beam but with support columns - stable
+        floor(40, groundY - 20, 80, 2);
+        column(40, groundY - 20, groundY - 1, 3);
+        column(60, groundY - 20, groundY - 1, 3);
+        column(80, groundY - 20, groundY - 1, 3);
+        column(100, groundY - 20, groundY - 1, 3);
+        column(117, groundY - 20, groundY - 1, 3);
+        break;
+
+      case 'cantilever':
+        // Tests how far a beam can extend without support
+        column(30, groundY - 40, groundY - 1, 4, false);
+        floor(30, groundY - 40, 50, 3);
+        break;
+
+      case 'arch':
+        // Arch structure - tests diagonal support
+        for (let i = 0; i < 20; i++) {
+          const y = groundY - 20 + Math.floor(i * i / 20);
+          setSolid(cells, 60 + i, y, 0);
+          setSolid(cells, 60 + i, y + 1, 0);
+          setSolid(cells, 100 - i, y, 0);
+          setSolid(cells, 100 - i, y + 1, 0);
+        }
+        // Keystone
+        floor(78, groundY - 22, 4, 2);
+        break;
+
+      case 'tower':
+        // Tall unsupported tower - tests vertical stability
+        const towerX = 70;
+        const towerW = 20;
+        for (let floorNum = 0; floorNum < 5; floorNum++) {
+          const fy = groundY - (floorNum + 1) * 12;
+          // Walls
+          rect(towerX, fy, 2, 12);
+          rect(towerX + towerW - 2, fy, 2, 12);
+          // Floor
+          floor(towerX, fy + 10, towerW, 2);
+        }
+        floor(towerX, groundY - 60, towerW, 2);
+        break;
+
+      case 'building':
+        // Multi-story building WITHOUT support columns - will partially collapse
+        const bx = 50;
+        const bw = 60;
+        for (let floorNum = 0; floorNum < 3; floorNum++) {
+          const fy = groundY - (floorNum + 1) * 15;
+          rect(bx, fy, 2, 15);
+          rect(bx + bw - 2, fy, 2, 15);
+          floor(bx, fy + 13, bw, 2);
+        }
+        floor(bx, groundY - 45, bw, 2);
+        break;
+
+      case 'bridge':
+        // Bridge with single center support
+        floor(20, groundY - 15, 120, 2);
+        column(20, groundY - 15, groundY - 1, 3);
+        column(78, groundY - 15, groundY - 1, 4); // Center support
+        column(137, groundY - 15, groundY - 1, 3);
+        break;
+
+      case 'stable':
+        // Properly supported building that should NOT collapse
+        const sx = 40;
+        const sw = 80;
+        const floorH = 15;
+        
+        for (let floorNum = 0; floorNum < 4; floorNum++) {
+          const fy = groundY - (floorNum + 1) * floorH;
+          // Outer walls
+          rect(sx, fy, 3, floorH);
+          rect(sx + sw - 3, fy, 3, floorH);
+          // Floor
+          floor(sx, fy + floorH - 2, sw, 2);
+        }
+        // Roof
+        floor(sx, groundY - 4 * floorH, sw, 2);
+        
+        // Support columns every ~15 cells (passable so entities can walk through)
+        for (let cx = sx + 10; cx < sx + sw - 5; cx += 15) {
+          column(cx, groundY - 4 * floorH, groundY - 1, 3, true);
+        }
+        break;
+    }
+
+    uploadWorld(cells, h, v);
+  }
+
+  // Wire up test buttons
+  document.getElementById('testUnsupported').onclick = () => buildTestStructure('unsupported');
+  document.getElementById('testSupported').onclick = () => buildTestStructure('supported');
+  document.getElementById('testCantilever').onclick = () => buildTestStructure('cantilever');
+  document.getElementById('testArch').onclick = () => buildTestStructure('arch');
+  document.getElementById('testTower').onclick = () => buildTestStructure('tower');
+  document.getElementById('testBuilding').onclick = () => buildTestStructure('building');
+  document.getElementById('testBridge').onclick = () => buildTestStructure('bridge');
+  document.getElementById('testStable').onclick = () => buildTestStructure('stable');
+  ui.reset.addEventListener("click", clearWorld);
+
+  clearWorld();
+
+  function drawBonds() {
+    if (!ui.showBonds.checked) return;
+    
+    const scaleX = overlay.width / GRID_W;
+    const scaleY = overlay.height / GRID_H;
+    
+    overlayCtx.lineWidth = 1;
+    
+    // Draw horizontal bonds
+    for (let y = 0; y < GRID_H; y++) {
+      for (let x = 0; x < GRID_W - 1; x++) {
+        const cell1 = cpuCells[y * GRID_W + x];
+        const cell2 = cpuCells[y * GRID_W + x + 1];
+        const solid1 = ((cell1 >> 8) & 1) === 1 && (cell1 & 0xff) < 255;
+        const solid2 = ((cell2 >> 8) & 1) === 1 && (cell2 & 0xff) < 255;
+        
+        if (!solid1 || !solid2) continue;
+        
+        const bond = cpuBondsH[y * (GRID_W - 1) + x] & 0xff;
+        const t = bond / 255;
+        
+        // Color: green (strong) to red (weak)
+        const r = Math.floor((1 - t) * 255);
+        const g = Math.floor(t * 255);
+        overlayCtx.strokeStyle = `rgba(${r}, ${g}, 0, 0.6)`;
+        
+        const cx1 = (x + 0.5) * scaleX;
+        const cx2 = (x + 1.5) * scaleX;
+        const cy = (y + 0.5) * scaleY;
+        
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(cx1, cy);
+        overlayCtx.lineTo(cx2, cy);
+        overlayCtx.stroke();
+      }
+    }
+    
+    // Draw vertical bonds
+    for (let y = 0; y < GRID_H - 1; y++) {
+      for (let x = 0; x < GRID_W; x++) {
+        const cell1 = cpuCells[y * GRID_W + x];
+        const cell2 = cpuCells[(y + 1) * GRID_W + x];
+        const solid1 = ((cell1 >> 8) & 1) === 1 && (cell1 & 0xff) < 255;
+        const solid2 = ((cell2 >> 8) & 1) === 1 && (cell2 & 0xff) < 255;
+        
+        if (!solid1 || !solid2) continue;
+        
+        const bond = cpuBondsV[y * GRID_W + x] & 0xff;
+        const t = bond / 255;
+        
+        const r = Math.floor((1 - t) * 255);
+        const g = Math.floor(t * 255);
+        overlayCtx.strokeStyle = `rgba(${r}, ${g}, 0, 0.6)`;
+        
+        const cx = (x + 0.5) * scaleX;
+        const cy1 = (y + 0.5) * scaleY;
+        const cy2 = (y + 1.5) * scaleY;
+        
+        overlayCtx.beginPath();
+        overlayCtx.moveTo(cx, cy1);
+        overlayCtx.lineTo(cx, cy2);
+        overlayCtx.stroke();
+      }
+    }
+  }
+
+  function writeParams() {
+    const p = new Uint32Array(paramsU32);
+    p[0] = GRID_W;
+    p[1] = GRID_H;
+    p[2] = Number(ui.radius.value);
+    p[3] = Number(ui.damage.value);
+    p[4] = Number(ui.bondWeaken.value);
+    p[5] = state.mx;
+    p[6] = state.my;
+    p[7] = state.mdown;
+    p[8] = state.repair;
+    p[9] = state.frame;
+    p[10] = Number(ui.relaxIters.value);
+    p[11] = 0;
+    device.queue.writeBuffer(paramsBuf, 0, p);
+  }
+
+  const wgX = Math.ceil(GRID_W / 16);
+  const wgY = Math.ceil(GRID_H / 16);
+
+  function dispatch(pass, pipe) {
+    pass.setPipeline(pipe);
+    pass.setBindGroup(0, computeBG);
+    pass.dispatchWorkgroups(wgX, wgY);
+  }
+
+  function frame() {
+    const shouldStep = !ui.paused.checked || state.stepOnce;
+    state.stepOnce = false;
+    
+    if (shouldStep) {
+      state.frame++;
+    }
+    
+    writeParams();
+
+    const encoder = device.createCommandEncoder();
+
+    if (shouldStep) {
+      let pass = encoder.beginComputePass();
+      dispatch(pass, brushPipe);
+      dispatch(pass, bondsDecayPipe);
+      dispatch(pass, stepPipe);
+      pass.end();
+
+      encoder.copyBufferToBuffer(cellsB, 0, cellsA, 0, cellsBytes);
+
+      const iters = Number(ui.relaxIters.value);
+      for (let k = 0; k < iters; k++) {
+        pass = encoder.beginComputePass();
+        dispatch(pass, relaxPipe);
+        pass.end();
+        encoder.copyBufferToBuffer(cellsB, 0, cellsA, 0, cellsBytes);
+      }
+    }
+
+    {
+      const pass = encoder.beginComputePass();
+      dispatch(pass, visPipe);
+      pass.end();
+    }
+
+    const view = context.getCurrentTexture().createView();
+    const rpass = encoder.beginRenderPass({
+      colorAttachments: [{
+        view,
+        clearValue: { r: 0, g: 0, b: 0, a: 1 },
+        loadOp: "clear",
+        storeOp: "store",
+      }],
+    });
+    rpass.setPipeline(renderPipe);
+    rpass.setBindGroup(0, renderBG);
+    rpass.draw(6);
+    rpass.end();
+
+    device.queue.submit([encoder.finish()]);
+    
+    // Readback for visualization
+    if (state.frame % 5 === 0) {
+      readbackData();
+    }
+    
+    overlayCtx.clearRect(0, 0, overlay.width, overlay.height);
+    drawBonds();
+    
+    requestAnimationFrame(frame);
+  }
+
+  requestAnimationFrame(frame);
+}
+
+init().catch((err) => {
+  console.error(err);
+  alert(String(err));
+});
+    </script>
+  </body>
+</html>

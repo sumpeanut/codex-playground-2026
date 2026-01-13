@@ -84,8 +84,47 @@ fn bondV(x: u32, y: u32) -> u32 { // between (x,y) and (x,y+1)
 fn emptyAtA(x: u32, y: u32) -> bool { return !getSolid(cellsA[idx(x,y)]); }
 
 // -------------------- Tunables --------------------
-const COHESION_TH: u32 = 180u; // bonds >= this are "strong welds"
-const SUPPORT_TH:  u32 = 90u;  // bonds < this allow separation (falling)
+const COHESION_TH: u32 = 120u; // bonds >= this are "strong welds"
+const SUPPORT_TH:  u32 = 40u;  // bonds < this allow separation (falling)
+const HORIZONTAL_SUPPORT_RANGE: u32 = 6u; // How far horizontal support can propagate
+
+// Check if cell has vertical support (solid below with strong bond)
+fn has_vertical_support(x: u32, y: u32) -> bool {
+  if (y + 1u >= params.h) { return true; } // Bottom of grid is supported
+  if (!getSolid(cellsA[idx(x, y + 1u)])) { return false; } // Nothing solid below
+  return bondV(x, y) >= SUPPORT_TH; // Strong enough vertical bond
+}
+
+// Check if cell is supported (directly or through horizontal bonds)
+// This allows beams to span gaps by propagating support horizontally
+fn is_supported(x: u32, y: u32) -> bool {
+  // Direct vertical support
+  if (has_vertical_support(x, y)) { return true; }
+  
+  // Check left for horizontal support chain
+  var lx = x;
+  for (var i = 0u; i < HORIZONTAL_SUPPORT_RANGE; i = i + 1u) {
+    if (lx == 0u) { break; }
+    let bond = bondH(lx - 1u, y);
+    if (bond < COHESION_TH) { break; } // Chain broken
+    lx = lx - 1u;
+    if (!getSolid(cellsA[idx(lx, y)])) { break; } // No cell to bond to
+    if (has_vertical_support(lx, y)) { return true; } // Found support
+  }
+  
+  // Check right for horizontal support chain
+  var rx = x;
+  for (var i = 0u; i < HORIZONTAL_SUPPORT_RANGE; i = i + 1u) {
+    if (rx + 1u >= params.w) { break; }
+    let bond = bondH(rx, y);
+    if (bond < COHESION_TH) { break; } // Chain broken
+    rx = rx + 1u;
+    if (!getSolid(cellsA[idx(rx, y)])) { break; } // No cell to bond to
+    if (has_vertical_support(rx, y)) { return true; } // Found support
+  }
+  
+  return false;
+}
 
 // Cohesion rule for falling (1-hop):
 // If strongly welded to a neighbor, require that neighbor also has empty below.
@@ -109,8 +148,8 @@ fn cohesion_ok_for_fall(x: u32, y: u32) -> bool {
 }
 
 fn support_allows_fall(x: u32, y: u32) -> bool {
-  if (y + 1u >= params.h) { return false; }
-  return bondV(x, y) < SUPPORT_TH;
+  // Cell is supported if it has direct vertical support OR horizontal support chain
+  return !is_supported(x, y);
 }
 
 // -------------------- Pass 1: Brush damage/repair --------------------
