@@ -16,6 +16,9 @@ const ui = {
   bondWeakenVal: document.getElementById("bondWeakenVal"),
   relaxItersVal: document.getElementById("relaxItersVal"),
   reset: document.getElementById("reset"),
+  structureMode: document.getElementById("structureMode"),
+  structureSelect: document.getElementById("structureSelect"),
+  structurePreview: document.getElementById("structurePreview"),
   showQuadTree: document.getElementById("showQuadTree"),
   spawnEntity: document.getElementById("spawnEntity"),
   entityCount: document.getElementById("entityCount"),
@@ -40,6 +43,84 @@ if (!navigator.gpu) throw new Error("WebGPU not supported. Use a WebGPU-enabled 
 const GRID_W = 256;
 const GRID_H = 144;
 
+const structureById = new Map(structures.map((structure) => [structure.id, structure]));
+let selectedStructureId = structures[0]?.id ?? "";
+
+function drawStructurePreview(structure) {
+  const canvasEl = ui.structurePreview;
+  if (!canvasEl) return;
+  const ctx = canvasEl.getContext("2d");
+  if (!ctx) return;
+  ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+  if (!structure || structure.width === 0 || structure.height === 0) {
+    ctx.fillStyle = "#1a1a1a";
+    ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+    return;
+  }
+  const scale = Math.min(canvasEl.width / structure.width, canvasEl.height / structure.height);
+  const offsetX = (canvasEl.width - structure.width * scale) / 2;
+  const offsetY = (canvasEl.height - structure.height * scale) / 2;
+  ctx.fillStyle = "#111";
+  ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+  for (let y = 0; y < structure.height; y++) {
+    for (let x = 0; x < structure.width; x++) {
+      const tile = structure.tiles[y * structure.width + x];
+      if (!tile) continue;
+      ctx.fillStyle = tile.color ?? "#d0dbe8";
+      ctx.fillRect(offsetX + x * scale, offsetY + y * scale, scale, scale);
+    }
+  }
+  ctx.strokeStyle = "rgba(255,255,255,0.15)";
+  ctx.strokeRect(offsetX + 0.5, offsetY + 0.5, structure.width * scale - 1, structure.height * scale - 1);
+}
+
+function drawStructureGhost(structure) {
+  if (!structure || !ui.structureMode?.checked) return;
+  const scaleX = overlay.width / GRID_W;
+  const scaleY = overlay.height / GRID_H;
+  const originX = state.mx - Math.floor(structure.width / 2);
+  const originY = state.my - Math.floor(structure.height / 2);
+
+  overlayCtx.save();
+  overlayCtx.globalAlpha = 0.55;
+
+  for (let y = 0; y < structure.height; y++) {
+    for (let x = 0; x < structure.width; x++) {
+      const tile = structure.tiles[y * structure.width + x];
+      if (!tile) continue;
+      const targetX = originX + x;
+      const targetY = originY + y;
+      if (targetX < 0 || targetX >= GRID_W || targetY < 0 || targetY >= GRID_H) continue;
+      overlayCtx.fillStyle = tile.color ?? "#d0dbe8";
+      overlayCtx.fillRect(targetX * scaleX, targetY * scaleY, scaleX, scaleY);
+    }
+  }
+
+  overlayCtx.restore();
+}
+
+function populateStructureSelect() {
+  if (!ui.structureSelect) return;
+  ui.structureSelect.innerHTML = "";
+  for (const structure of structures) {
+    const option = document.createElement("option");
+    option.value = structure.id;
+    option.textContent = structure.name ?? structure.id;
+    ui.structureSelect.appendChild(option);
+  }
+  if (structures.length > 0) {
+    selectedStructureId = structureById.has(selectedStructureId) ? selectedStructureId : structures[0].id;
+    ui.structureSelect.value = selectedStructureId;
+  }
+  drawStructurePreview(structureById.get(selectedStructureId));
+}
+
+populateStructureSelect();
+ui.structureSelect?.addEventListener("change", (event) => {
+  selectedStructureId = event.target.value;
+  drawStructurePreview(structureById.get(selectedStructureId));
+});
+
 const dpr = window.devicePixelRatio || 1;
 function resizeCanvas() {
   const rect = canvas.getBoundingClientRect();
@@ -52,6 +133,7 @@ window.addEventListener("resize", resizeCanvas);
 resizeCanvas();
 
 const state = { mx: 0, my: 0, mdown: 0, repair: 0, frame: 0 };
+let placeStructureAt = null;
 const overlayCtx = overlay.getContext("2d");
 
 // ---- Pathfinding Worker ----
@@ -201,6 +283,11 @@ canvas.addEventListener("pointerdown", (e) => {
       }
     }
     return; // Don't apply brush when doing entity stuff
+  }
+
+  if (ui.structureMode?.checked && placeStructureAt) {
+    placeStructureAt(gridX, gridY);
+    return;
   }
 
   canvas.setPointerCapture(e.pointerId);
@@ -541,6 +628,46 @@ async function init() {
     size: cellsBytes,
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
   });
+
+  function encodeStructureTile(tile) {
+    if (!tile) return null;
+    const damage = 0;
+    const solid = tile.solid !== false;
+    const passable = tile.passable === true;
+    return (damage & 0xff) | (solid ? (1 << 8) : 0) | (passable ? (1 << 9) : 0);
+  }
+
+  function placeStructureAtImpl(gridX, gridY) {
+    const structure = structureById.get(selectedStructureId);
+    if (!structure || structure.width === 0 || structure.height === 0) return;
+    const originX = gridX - Math.floor(structure.width / 2);
+    const originY = gridY - Math.floor(structure.height / 2);
+    let changed = false;
+
+    for (let y = 0; y < structure.height; y++) {
+      for (let x = 0; x < structure.width; x++) {
+        const tile = structure.tiles[y * structure.width + x];
+        if (!tile) continue;
+        const targetX = originX + x;
+        const targetY = originY + y;
+        if (targetX < 0 || targetX >= GRID_W || targetY < 0 || targetY >= GRID_H) continue;
+        const encoded = encodeStructureTile(tile);
+        if (encoded === null) continue;
+        cpuCells[targetY * GRID_W + targetX] = encoded;
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+    device.queue.writeBuffer(cellsA, 0, cpuCells);
+    device.queue.writeBuffer(cellsB, 0, cpuCells);
+    device.queue.writeBuffer(readbackBuffer, 0, cpuCells);
+    updateWorkerCells(cpuCells);
+    rebuildQuadTree();
+    quadState.lastBuiltFrame = state.frame;
+  }
+
+  placeStructureAt = placeStructureAtImpl;
 
   function getSolid(cell) {
     const dmg = cell & 0xff;
@@ -1285,6 +1412,7 @@ async function init() {
     if (ui.showQuadTree.checked) {
       drawQuadTree(quadState.root);
     }
+    drawStructureGhost(structureById.get(selectedStructureId));
     
     // Update and draw entities
     updateEntities();
