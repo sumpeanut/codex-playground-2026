@@ -1,3 +1,8 @@
+import { loadStructures } from "./structures.js";
+
+const structures = loadStructures();
+window.caStructures = structures;
+
 const canvas = document.getElementById("c");
 const overlay = document.getElementById("overlay");
 
