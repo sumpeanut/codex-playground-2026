@@ -11,6 +11,7 @@
       #overlay { position: fixed; inset: 0; pointer-events: none; }
       .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
       input[type="range"] { width: 220px; }
+      #structurePreview { width: 88px; height: 88px; border: 1px solid #333; border-radius: 6px; background: #111; }
       button { cursor: pointer; }
       kbd { background: #222; padding: 1px 6px; border-radius: 6px; border: 1px solid #333; }
       .small { font-size: 12px; opacity: .85; margin-top: 8px; line-height: 1.35; }
@@ -30,6 +31,16 @@
         <span>Damage</span>
         <input id="damage" type="range" min="1" max="255" value="80" />
         <span id="damageVal"></span>
+      </div>
+
+      <div class="row">
+        <label><input id="structureMode" type="checkbox" /> Place Structure</label>
+      </div>
+
+      <div class="row">
+        <span>Structure</span>
+        <select id="structureSelect"></select>
+        <canvas id="structurePreview" width="88" height="88"></canvas>
       </div>
 
       <div class="row">
