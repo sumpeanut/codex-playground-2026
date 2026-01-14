@@ -74,6 +74,31 @@ function drawStructurePreview(structure) {
   ctx.strokeRect(offsetX + 0.5, offsetY + 0.5, structure.width * scale - 1, structure.height * scale - 1);
 }
 
+function drawStructureGhost(structure) {
+  if (!structure || !ui.structureMode?.checked) return;
+  const scaleX = overlay.width / GRID_W;
+  const scaleY = overlay.height / GRID_H;
+  const originX = state.mx - Math.floor(structure.width / 2);
+  const originY = state.my - Math.floor(structure.height / 2);
+
+  overlayCtx.save();
+  overlayCtx.globalAlpha = 0.55;
+
+  for (let y = 0; y < structure.height; y++) {
+    for (let x = 0; x < structure.width; x++) {
+      const tile = structure.tiles[y * structure.width + x];
+      if (!tile) continue;
+      const targetX = originX + x;
+      const targetY = originY + y;
+      if (targetX < 0 || targetX >= GRID_W || targetY < 0 || targetY >= GRID_H) continue;
+      overlayCtx.fillStyle = tile.color ?? "#d0dbe8";
+      overlayCtx.fillRect(targetX * scaleX, targetY * scaleY, scaleX, scaleY);
+    }
+  }
+
+  overlayCtx.restore();
+}
+
 function populateStructureSelect() {
   if (!ui.structureSelect) return;
   ui.structureSelect.innerHTML = "";
@@ -1387,6 +1412,7 @@ async function init() {
     if (ui.showQuadTree.checked) {
       drawQuadTree(quadState.root);
     }
+    drawStructureGhost(structureById.get(selectedStructureId));
     
     // Update and draw entities
     updateEntities();
