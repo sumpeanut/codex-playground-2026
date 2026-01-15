@@ -95,6 +95,20 @@ function createEmptyStructure(name, width = DEFAULT_EDITOR_SIZE, height = DEFAUL
   };
 }
 
+function encodeColor565(hexColor) {
+  if (!hexColor) return 0;
+  const hex = hexColor.startsWith("#") ? hexColor.slice(1) : hexColor;
+  if (hex.length !== 6) return 0;
+  const r = Number.parseInt(hex.slice(0, 2), 16);
+  const g = Number.parseInt(hex.slice(2, 4), 16);
+  const b = Number.parseInt(hex.slice(4, 6), 16);
+  if (Number.isNaN(r) || Number.isNaN(g) || Number.isNaN(b)) return 0;
+  const r5 = (r >> 3) & 0x1f;
+  const g6 = (g >> 2) & 0x3f;
+  const b5 = (b >> 3) & 0x1f;
+  return (r5 << 11) | (g6 << 5) | b5;
+}
+
 function drawStructureToCanvas(structure, canvasEl, options = {}) {
   if (!canvasEl) return;
   const ctx = canvasEl.getContext("2d");
@@ -925,13 +939,15 @@ async function init() {
     size: cellsBytes,
     usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ,
   });
+  const bondWrite = new Uint32Array(1);
 
   function encodeStructureTile(tile) {
     if (!tile) return null;
     const damage = 0;
     const solid = tile.solid !== false;
     const passable = tile.passable === true;
-    return (damage & 0xff) | (solid ? (1 << 8) : 0) | (passable ? (1 << 9) : 0);
+    const colorBits = encodeColor565(tile.color) << 10;
+    return (damage & 0xff) | (solid ? (1 << 8) : 0) | (passable ? (1 << 9) : 0) | colorBits;
   }
 
   function placeStructureAtImpl(gridX, gridY) {
@@ -956,6 +972,29 @@ async function init() {
     }
 
     if (!changed) return;
+    for (let y = 0; y < structure.height; y++) {
+      for (let x = 0; x < structure.width; x++) {
+        const tile = structure.tiles[y * structure.width + x];
+        if (!tile) continue;
+        const targetX = originX + x;
+        const targetY = originY + y;
+        if (targetX < 0 || targetX >= GRID_W || targetY < 0 || targetY >= GRID_H) continue;
+        if (x + 1 < structure.width) {
+          const neighbor = structure.tiles[y * structure.width + x + 1];
+          if (neighbor && targetX + 1 < GRID_W) {
+            bondWrite[0] = 255;
+            device.queue.writeBuffer(bondsH, (targetY * (GRID_W - 1) + targetX) * 4, bondWrite);
+          }
+        }
+        if (y + 1 < structure.height) {
+          const neighbor = structure.tiles[(y + 1) * structure.width + x];
+          if (neighbor && targetY + 1 < GRID_H) {
+            bondWrite[0] = 255;
+            device.queue.writeBuffer(bondsV, (targetY * GRID_W + targetX) * 4, bondWrite);
+          }
+        }
+      }
+    }
     device.queue.writeBuffer(cellsA, 0, cpuCells);
     device.queue.writeBuffer(cellsB, 0, cpuCells);
     device.queue.writeBuffer(readbackBuffer, 0, cpuCells);
