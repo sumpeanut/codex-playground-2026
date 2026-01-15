@@ -7,6 +7,24 @@
     <style>
       html, body { margin: 0; height: 100%; background: #111; color: #ddd; font-family: system-ui, sans-serif; }
       #ui { position: fixed; left: 12px; top: 12px; background: rgba(0,0,0,.55); padding: 10px 12px; border-radius: 10px; }
+      #editorPanel { width: min(90vw, 720px); height: min(90vh, 720px); background: rgba(8,8,8,0.98); padding: 16px; border-radius: 16px; border: 1px solid #333; display: flex; flex-direction: column; gap: 10px; }
+      #editorPanel header { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+      #editorPanel header h2 { margin: 0; font-size: 18px; }
+      #editorPanel header button { padding: 4px 10px; }
+      #editorPanel h2 { margin: 0 0 8px; font-size: 16px; }
+      .editor-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+      .editor-controls button { padding: 4px 8px; }
+      .editor-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+      .structure-list { display: grid; gap: 6px; margin-bottom: 6px; max-height: 180px; overflow: auto; padding-right: 4px; }
+      .structure-item { display: grid; grid-template-columns: 40px 1fr; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 8px; border: 1px solid #222; background: #141414; cursor: pointer; }
+      .structure-item.active { border-color: #4aa3ff; box-shadow: 0 0 0 1px rgba(74,163,255,0.6); }
+      .structure-item canvas { width: 40px; height: 40px; background: #0e0e0e; border-radius: 4px; border: 1px solid #222; }
+      #editorCanvas { width: 100%; height: 100%; border: 1px solid #222; background: #101010; image-rendering: pixelated; border-radius: 8px; display: block; }
+      .editor-grid-wrap { flex: 1; min-height: 220px; }
+      .editor-legend { font-size: 12px; opacity: 0.8; }
+      dialog { background: #111; color: #ddd; border: 1px solid #333; border-radius: 14px; padding: 12px; }
+      dialog::backdrop { background: rgba(0,0,0,0.6); }
+      #structureData { width: 100%; min-height: 180px; background: #0c0c0c; color: #eee; border: 1px solid #333; border-radius: 6px; padding: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
       canvas { width: 100vw; height: 100vh; display: block; image-rendering: pixelated; }
       #overlay { position: fixed; inset: 0; pointer-events: none; }
       .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
@@ -15,6 +33,7 @@
       button { cursor: pointer; }
       kbd { background: #222; padding: 1px 6px; border-radius: 6px; border: 1px solid #333; }
       .small { font-size: 12px; opacity: .85; margin-top: 8px; line-height: 1.35; }
+      #editorDialog { padding: 0; border: none; background: transparent; }
     </style>
   </head>
   <body>
@@ -69,6 +88,10 @@
         <span>Entities: <span id="entityCount">0</span></span>
       </div>
 
+      <div class="row">
+        <button id="openEditor">Open Structure Editor</button>
+      </div>
+
       <div class="small">
         Left-drag: damage cells + weaken nearby bonds.<br/>
         Shift+drag: repair cells + strengthen bonds.<br/>
@@ -79,6 +102,57 @@
 
     <canvas id="c"></canvas>
     <canvas id="overlay"></canvas>
+    <dialog id="editorDialog">
+      <div id="editorPanel" role="dialog" aria-labelledby="editorTitle">
+        <header>
+          <h2 id="editorTitle">Structure Editor</h2>
+          <button id="closeEditor">Close</button>
+        </header>
+        <div class="editor-controls">
+          <button id="editorNew">New</button>
+          <button id="editorRename">Rename</button>
+          <button id="editorDelete">Delete</button>
+          <button id="editorExport">Export</button>
+          <button id="editorImport">Import</button>
+        </div>
+
+        <div id="structureList" class="structure-list"></div>
+
+        <div class="editor-grid-wrap">
+          <canvas id="editorCanvas" width="360" height="360"></canvas>
+        </div>
+
+        <div class="editor-row">
+          <label>Paint
+            <select id="paintMode">
+              <option value="paint">Paint</option>
+              <option value="erase">Erase</option>
+            </select>
+          </label>
+          <label>Tile
+            <select id="tileType">
+              <option value="solid">Solid</option>
+              <option value="passable">Passable</option>
+            </select>
+          </label>
+          <label>Color
+            <input id="tileColor" type="color" value="#d0dbe8" />
+          </label>
+        </div>
+        <div class="editor-legend">Drag to paint. Passable tiles allow entities to walk through.</div>
+      </div>
+    </dialog>
+
+    <dialog id="structureModal">
+      <form method="dialog">
+        <h3 id="structureModalTitle">Structure Data</h3>
+        <textarea id="structureData" spellcheck="false"></textarea>
+        <div class="editor-row">
+          <button id="structureModalConfirm" value="confirm">Confirm</button>
+          <button value="cancel">Close</button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="./main.js"></script>
   </body>
 </html>

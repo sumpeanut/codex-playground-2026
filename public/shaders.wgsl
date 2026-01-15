@@ -24,6 +24,7 @@ struct Params {
 // bits 0..7   damage (0..255)   0 = intact, 255 = destroyed
 // bit  8      solid flag (1=solid, 0=empty)
 // bit  9      passable flag (1=entities can pass through, 0=blocking)
+// bits 10..25 packed RGB565 color (optional, 0 = default palette)
 //             A "support cell" has solid=1, passable=1 (solid in physics, walkable by entities)
 // (Destroyed implies empty)
 @group(0) @binding(1) var<storage, read_write> cellsA: array<u32>;
@@ -42,6 +43,7 @@ fn idx(x: u32, y: u32) -> u32 { return y * params.w + x; }
 fn getDmg(c: u32) -> u32 { return c & 0xFFu; }
 fn getSolidBit(c: u32) -> u32 { return (c >> 8u) & 1u; }
 fn getPassableBit(c: u32) -> u32 { return (c >> 9u) & 1u; }
+fn getColorBits(c: u32) -> u32 { return (c >> 10u) & 0xFFFFu; }
 
 // Returns true if cell is solid (for physics simulation)
 fn getSolid(c: u32) -> bool {
@@ -54,15 +56,17 @@ fn isSupport(c: u32) -> bool {
   return getSolid(c) && getPassableBit(c) == 1u;
 }
 
-fn packCell(solid: bool, dmg: u32) -> u32 {
-  let s = select(0u, 1u, solid);
-  return (dmg & 0xFFu) | (s << 8u);
-}
-
-fn packCellWithPassable(solid: bool, passable: bool, dmg: u32) -> u32 {
+fn packCellRaw(solid: bool, passable: bool, dmg: u32, colorBits: u32) -> u32 {
   let s = select(0u, 1u, solid);
   let p = select(0u, 1u, passable);
-  return (dmg & 0xFFu) | (s << 8u) | (p << 9u);
+  let color = colorBits & 0xFFFFu;
+  return (dmg & 0xFFu) | (s << 8u) | (p << 9u) | (color << 10u);
+}
+
+fn packCellFrom(c: u32, solid: bool, dmg: u32) -> u32 {
+  let p = getPassableBit(c) == 1u;
+  let color = getColorBits(c);
+  return packCellRaw(solid, p, dmg, color);
 }
 
 fn clampU32(v: u32, lo: u32, hi: u32) -> u32 { return max(lo, min(hi, v)); }
@@ -172,12 +176,12 @@ fn brush(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (params.repair == 1u) {
     let cd = getDmg(c);
     let nd = clampU32(cd - min(cd, params.damage), 0u, 255u);
-    cellsA[i] = packCell(true, nd);
+    cellsA[i] = packCellFrom(c, true, nd);
   } else {
     let cd = getDmg(c);
     let nd = clampU32(cd + params.damage, 0u, 255u);
     let alive = nd < 255u;
-    cellsA[i] = packCell(alive, nd);
+    cellsA[i] = packCellFrom(c, alive, nd);
   }
 
   // Bonds around cell: weaken/repair
@@ -417,10 +421,21 @@ fn visualize(@builtin(global_invocation_id) gid: vec3<u32>) {
   let solid = getSolid(c);
   let support = isSupport(c);
   let d = f32(getDmg(c)) / 255.0;
+  let colorBits = getColorBits(c);
 
   var col: vec4<f32>;
   if (!solid) {
     col = vec4<f32>(0.06, 0.06, 0.07, 1.0);
+  } else if (colorBits != 0u) {
+    let r = f32((colorBits >> 11u) & 0x1Fu) / 31.0;
+    let g = f32((colorBits >> 5u) & 0x3Fu) / 63.0;
+    let b = f32(colorBits & 0x1Fu) / 31.0;
+    var base = vec3<f32>(r, g, b);
+    if (support) {
+      base = base * vec3<f32>(0.82, 0.75, 0.68);
+    }
+    let shade = 1.0 - (d * 0.8);
+    col = vec4<f32>(base * shade, 1.0);
   } else if (support) {
     // Support cells: darker brownish/gray color with pattern
     // These are passable by entities but solid in simulation
