@@ -1,0 +1,777 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Structure Editor + Persistence Test</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        background: #0f0f0f;
+        color: #e5e5e5;
+      }
+      #app {
+        display: grid;
+        grid-template-columns: 320px 1fr;
+        min-height: 100vh;
+      }
+      aside {
+        padding: 18px;
+        border-right: 1px solid #222;
+        background: #141414;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+      main {
+        padding: 18px;
+        display: grid;
+        grid-template-columns: minmax(320px, 1fr) 320px;
+        gap: 20px;
+      }
+      h1 {
+        font-size: 18px;
+        margin: 0 0 8px;
+      }
+      h2 {
+        font-size: 14px;
+        margin: 0 0 8px;
+        text-transform: uppercase;
+        letter-spacing: 0.08em;
+        color: #7fd0ff;
+      }
+      .hint {
+        font-size: 12px;
+        color: #b8b8b8;
+        line-height: 1.5;
+      }
+      .section {
+        display: flex;
+        flex-direction: column;
+        gap: 8px;
+      }
+      .structure-list {
+        display: grid;
+        gap: 6px;
+        max-height: 220px;
+        overflow: auto;
+        padding-right: 4px;
+      }
+      .structure-item {
+        display: grid;
+        grid-template-columns: 42px 1fr;
+        gap: 10px;
+        align-items: center;
+        padding: 6px 8px;
+        border-radius: 8px;
+        border: 1px solid #222;
+        background: #111;
+        cursor: pointer;
+      }
+      .structure-item.active {
+        border-color: #4aa3ff;
+        box-shadow: 0 0 0 1px rgba(74, 163, 255, 0.6);
+      }
+      .structure-item canvas {
+        width: 42px;
+        height: 42px;
+        background: #0c0c0c;
+        border-radius: 6px;
+        border: 1px solid #222;
+      }
+      .row {
+        display: flex;
+        gap: 8px;
+        align-items: center;
+      }
+      button {
+        cursor: pointer;
+        background: #1f1f1f;
+        color: #e5e5e5;
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 6px 10px;
+        font-size: 12px;
+      }
+      button:hover {
+        background: #2a2a2a;
+      }
+      label {
+        display: flex;
+        flex-direction: column;
+        gap: 4px;
+        font-size: 12px;
+      }
+      select,
+      input[type="color"],
+      input[type="number"] {
+        background: #0f0f0f;
+        color: #e5e5e5;
+        border: 1px solid #333;
+        border-radius: 6px;
+        padding: 6px 8px;
+      }
+      .canvas-wrap {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+      #editorCanvas {
+        width: 100%;
+        max-width: 720px;
+        aspect-ratio: 1 / 1;
+        border: 1px solid #2c2c2c;
+        border-radius: 12px;
+        background: #0a0a0a;
+      }
+      .legend {
+        font-size: 12px;
+        color: #b0b0b0;
+        line-height: 1.5;
+      }
+      .log {
+        background: #121212;
+        border: 1px solid #262626;
+        border-radius: 12px;
+        padding: 12px;
+        max-height: 520px;
+        overflow: auto;
+      }
+      .log-list {
+        display: grid;
+        gap: 8px;
+        font-size: 12px;
+      }
+      .log-entry {
+        padding: 8px;
+        border-radius: 8px;
+        background: #101828;
+        border: 1px solid #1f2b44;
+      }
+      .sim-status {
+        font-size: 12px;
+        color: #d0d0d0;
+        line-height: 1.4;
+        padding: 6px 0 0;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <aside>
+        <div>
+          <h1>Structure Editor Test</h1>
+          <div class="hint">
+            Use this page to verify structure persistence. Create a structure, reload the page, and confirm it reappears in the list.
+          </div>
+        </div>
+
+        <section class="section">
+          <h2>Structures</h2>
+          <div id="structureList" class="structure-list"></div>
+          <div class="row">
+            <button id="newStructure">New</button>
+            <button id="renameStructure">Rename</button>
+            <button id="deleteStructure">Delete</button>
+          </div>
+          <button id="resetDefaults">Reset to baseline</button>
+        </section>
+
+        <section class="section">
+          <h2>Editor Tools</h2>
+          <label>
+            Paint mode
+            <select id="paintMode">
+              <option value="paint">Paint</option>
+              <option value="erase">Erase</option>
+            </select>
+          </label>
+          <label>
+            Tile type
+            <select id="tileType">
+              <option value="solid">Solid</option>
+              <option value="support">Support</option>
+            </select>
+          </label>
+          <label>
+            Tile color
+            <input id="tileColor" type="color" value="#d0dbe8" />
+          </label>
+        </section>
+
+        <section class="section">
+          <h2>Simulate/Step</h2>
+          <div class="row">
+            <button id="simReset">Reset</button>
+            <button id="simStep">Step</button>
+            <button id="simRun">Simulate</button>
+            <input id="simSteps" type="number" min="1" max="600" value="60" />
+          </div>
+          <div id="simStatus" class="sim-status">Load a structure to run the stability check.</div>
+        </section>
+      </aside>
+
+      <main>
+        <div class="canvas-wrap">
+          <h2>Editor Canvas</h2>
+          <canvas id="editorCanvas" width="720" height="720"></canvas>
+          <div class="legend">
+            Click + drag to paint. Use erase mode to clear tiles. Support tiles are passable but still provide stability.
+          </div>
+        </div>
+        <section class="log">
+          <h2>Storage instrumentation</h2>
+          <div id="storageLog" class="log-list"></div>
+        </section>
+      </main>
+    </div>
+
+    <script type="module">
+      import { loadStructures, saveStructures, getDefaultStructures, STORAGE_KEY } from "./structures.js";
+
+      const DEFAULT_SOLID_COLOR = "#d0dbe8";
+      const DEFAULT_PASSABLE_COLOR = "#5a4a3a";
+      const DEFAULT_EDITOR_SIZE = 24;
+
+      const ui = {
+        structureList: document.getElementById("structureList"),
+        newStructure: document.getElementById("newStructure"),
+        renameStructure: document.getElementById("renameStructure"),
+        deleteStructure: document.getElementById("deleteStructure"),
+        resetDefaults: document.getElementById("resetDefaults"),
+        paintMode: document.getElementById("paintMode"),
+        tileType: document.getElementById("tileType"),
+        tileColor: document.getElementById("tileColor"),
+        editorCanvas: document.getElementById("editorCanvas"),
+        storageLog: document.getElementById("storageLog"),
+        simReset: document.getElementById("simReset"),
+        simStep: document.getElementById("simStep"),
+        simRun: document.getElementById("simRun"),
+        simSteps: document.getElementById("simSteps"),
+        simStatus: document.getElementById("simStatus"),
+      };
+
+      const structures = loadStructures();
+      const structureById = new Map(structures.map((structure) => [structure.id, structure]));
+      let selectedStructureId = structures[0]?.id ?? "";
+
+      const editorState = {
+        currentId: selectedStructureId,
+        paintMode: "paint",
+        tileType: "solid",
+        color: DEFAULT_SOLID_COLOR,
+        painting: false,
+      };
+
+      function logStorageEvent(type, details) {
+        const entry = document.createElement("div");
+        entry.className = "log-entry";
+        const time = new Date().toLocaleTimeString();
+        entry.textContent = `[${time}] ${type}: ${details}`;
+        ui.storageLog.prepend(entry);
+        console.info("Storage", type, details);
+      }
+
+      const storedPayload = localStorage.getItem(STORAGE_KEY);
+      logStorageEvent(
+        "read",
+        `Loaded ${structures.length} structures from ${STORAGE_KEY} (${storedPayload?.length ?? 0} bytes)`
+      );
+
+      function persistStructures(reason = "update") {
+        saveStructures(structures);
+        const payload = localStorage.getItem(STORAGE_KEY);
+        logStorageEvent(
+          "write",
+          `${reason}: saved ${structures.length} structures (${payload?.length ?? 0} bytes)`
+        );
+      }
+
+      function rebuildStructureMap() {
+        structureById.clear();
+        structures.forEach((structure) => structureById.set(structure.id, structure));
+      }
+
+      function createStructureId(name) {
+        const safe = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
+        return `custom-${safe || "structure"}-${Date.now().toString(36)}`;
+      }
+
+      function createEmptyStructure(name, width = DEFAULT_EDITOR_SIZE, height = DEFAULT_EDITOR_SIZE) {
+        return {
+          id: createStructureId(name),
+          name,
+          width,
+          height,
+          tiles: Array.from({ length: width * height }, () => null),
+        };
+      }
+
+      function drawStructureToCanvas(structure, canvasEl, options = {}) {
+        if (!canvasEl) return;
+        const ctx = canvasEl.getContext("2d");
+        if (!ctx) return;
+        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+        if (!structure || structure.width === 0 || structure.height === 0) {
+          ctx.fillStyle = "#1a1a1a";
+          ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+          return;
+        }
+        const scale = Math.min(canvasEl.width / structure.width, canvasEl.height / structure.height);
+        const offsetX = (canvasEl.width - structure.width * scale) / 2;
+        const offsetY = (canvasEl.height - structure.height * scale) / 2;
+        ctx.fillStyle = options.background ?? "#111";
+        ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+        for (let y = 0; y < structure.height; y++) {
+          for (let x = 0; x < structure.width; x++) {
+            const tile = structure.tiles[y * structure.width + x];
+            if (!tile) continue;
+            ctx.fillStyle = tile.color ?? DEFAULT_SOLID_COLOR;
+            ctx.fillRect(offsetX + x * scale, offsetY + y * scale, scale, scale);
+          }
+        }
+        ctx.strokeStyle = options.border ?? "rgba(255,255,255,0.15)";
+        ctx.strokeRect(offsetX + 0.5, offsetY + 0.5, structure.width * scale - 1, structure.height * scale - 1);
+      }
+
+      function renderStructureList() {
+        ui.structureList.innerHTML = "";
+        for (const structure of structures) {
+          const item = document.createElement("div");
+          item.className = "structure-item";
+          if (structure.id === selectedStructureId) item.classList.add("active");
+          const preview = document.createElement("canvas");
+          preview.width = 42;
+          preview.height = 42;
+          drawStructureToCanvas(structure, preview, { background: "#0c0c0c" });
+          const label = document.createElement("div");
+          label.textContent = structure.name ?? structure.id;
+          item.appendChild(preview);
+          item.appendChild(label);
+          item.addEventListener("click", () => {
+            selectStructure(structure.id);
+          });
+          ui.structureList.appendChild(item);
+        }
+      }
+
+      function drawEditorCanvas() {
+        const structure = structureById.get(editorState.currentId);
+        const ctx = ui.editorCanvas.getContext("2d");
+        if (!ctx) return;
+        const canvasEl = ui.editorCanvas;
+        ctx.clearRect(0, 0, canvasEl.width, canvasEl.height);
+        ctx.fillStyle = "#101010";
+        ctx.fillRect(0, 0, canvasEl.width, canvasEl.height);
+        if (!structure || structure.width === 0 || structure.height === 0) return;
+        const scale = Math.min(canvasEl.width / structure.width, canvasEl.height / structure.height);
+        const offsetX = (canvasEl.width - structure.width * scale) / 2;
+        const offsetY = (canvasEl.height - structure.height * scale) / 2;
+        for (let y = 0; y < structure.height; y++) {
+          for (let x = 0; x < structure.width; x++) {
+            const tile = structure.tiles[y * structure.width + x];
+            if (!tile) continue;
+            ctx.fillStyle = tile.color ?? DEFAULT_SOLID_COLOR;
+            ctx.fillRect(offsetX + x * scale, offsetY + y * scale, scale, scale);
+          }
+        }
+        ctx.strokeStyle = "rgba(255,255,255,0.08)";
+        ctx.lineWidth = 1;
+        for (let x = 0; x <= structure.width; x++) {
+          const px = offsetX + x * scale;
+          ctx.beginPath();
+          ctx.moveTo(px, offsetY);
+          ctx.lineTo(px, offsetY + structure.height * scale);
+          ctx.stroke();
+        }
+        for (let y = 0; y <= structure.height; y++) {
+          const py = offsetY + y * scale;
+          ctx.beginPath();
+          ctx.moveTo(offsetX, py);
+          ctx.lineTo(offsetX + structure.width * scale, py);
+          ctx.stroke();
+        }
+      }
+
+      function selectStructure(id) {
+        if (!structureById.has(id)) return;
+        selectedStructureId = id;
+        editorState.currentId = id;
+        renderStructureList();
+        drawEditorCanvas();
+        resetSimulation();
+      }
+
+      function syncEditorStateFromUI() {
+        editorState.paintMode = ui.paintMode.value;
+        editorState.tileType = ui.tileType.value;
+        editorState.color = ui.tileColor.value;
+      }
+
+      function applyEdit(x, y) {
+        const structure = structureById.get(editorState.currentId);
+        if (!structure) return;
+        if (x < 0 || x >= structure.width || y < 0 || y >= structure.height) return;
+        const index = y * structure.width + x;
+        if (editorState.paintMode === "erase") {
+          structure.tiles[index] = null;
+        } else {
+          const passable = editorState.tileType === "support";
+          structure.tiles[index] = {
+            solid: true,
+            passable,
+            color: editorState.color || (passable ? DEFAULT_PASSABLE_COLOR : DEFAULT_SOLID_COLOR),
+          };
+        }
+        drawEditorCanvas();
+        renderStructureList();
+        persistStructures("edit");
+        resetSimulation();
+      }
+
+      function getCellFromEvent(event) {
+        const structure = structureById.get(editorState.currentId);
+        if (!structure) return null;
+        const rect = ui.editorCanvas.getBoundingClientRect();
+        const nx = (event.clientX - rect.left) / rect.width;
+        const ny = (event.clientY - rect.top) / rect.height;
+        const x = Math.floor(nx * structure.width);
+        const y = Math.floor(ny * structure.height);
+        if (x < 0 || x >= structure.width || y < 0 || y >= structure.height) return null;
+        return { x, y };
+      }
+
+      ui.editorCanvas.addEventListener("pointerdown", (event) => {
+        ui.editorCanvas.setPointerCapture(event.pointerId);
+        editorState.painting = true;
+        syncEditorStateFromUI();
+        const cell = getCellFromEvent(event);
+        if (cell) applyEdit(cell.x, cell.y);
+      });
+
+      ui.editorCanvas.addEventListener("pointermove", (event) => {
+        if (!editorState.painting) return;
+        const cell = getCellFromEvent(event);
+        if (cell) applyEdit(cell.x, cell.y);
+      });
+
+      ui.editorCanvas.addEventListener("pointerup", () => {
+        editorState.painting = false;
+      });
+
+      ui.editorCanvas.addEventListener("pointerleave", () => {
+        editorState.painting = false;
+      });
+
+      ui.newStructure.addEventListener("click", () => {
+        const name = window.prompt("New structure name:", "New Structure");
+        if (!name) return;
+        const width = Number.parseInt(window.prompt("Width", `${DEFAULT_EDITOR_SIZE}`) || "", 10);
+        const height = Number.parseInt(window.prompt("Height", `${DEFAULT_EDITOR_SIZE}`) || "", 10);
+        if (!Number.isFinite(width) || !Number.isFinite(height) || width <= 0 || height <= 0) return;
+        const structure = createEmptyStructure(name.trim(), width, height);
+        structures.push(structure);
+        rebuildStructureMap();
+        selectStructure(structure.id);
+        persistStructures("new structure");
+      });
+
+      ui.renameStructure.addEventListener("click", () => {
+        const structure = structureById.get(editorState.currentId);
+        if (!structure) return;
+        const name = window.prompt("Rename structure:", structure.name ?? structure.id);
+        if (!name) return;
+        structure.name = name.trim();
+        renderStructureList();
+        persistStructures("rename");
+      });
+
+      ui.deleteStructure.addEventListener("click", () => {
+        const structure = structureById.get(editorState.currentId);
+        if (!structure) return;
+        const confirmed = window.confirm(`Delete "${structure.name ?? structure.id}"?`);
+        if (!confirmed) return;
+        const index = structures.findIndex((entry) => entry.id === structure.id);
+        if (index >= 0) structures.splice(index, 1);
+        rebuildStructureMap();
+        selectedStructureId = structures[0]?.id ?? "";
+        editorState.currentId = selectedStructureId;
+        renderStructureList();
+        drawEditorCanvas();
+        persistStructures("delete");
+        resetSimulation();
+      });
+
+      ui.resetDefaults.addEventListener("click", () => {
+        const confirmed = window.confirm("Reset to baseline test structures?");
+        if (!confirmed) return;
+        structures.length = 0;
+        structures.push(...getDefaultStructures());
+        rebuildStructureMap();
+        selectedStructureId = structures[0]?.id ?? "";
+        editorState.currentId = selectedStructureId;
+        renderStructureList();
+        drawEditorCanvas();
+        persistStructures("reset baseline");
+        resetSimulation();
+      });
+
+      // ===== Simulation =====
+      const GRID_W = 160;
+      const GRID_H = 100;
+      const COHESION_TH = 120;
+      const SUPPORT_TH = 40;
+      const HORIZONTAL_SUPPORT_RANGE = 6;
+
+      const simState = {
+        frame: 0,
+        cpuCells: new Uint32Array(GRID_W * GRID_H),
+        bondsH: new Uint32Array((GRID_W - 1) * GRID_H),
+        bondsV: new Uint32Array(GRID_W * (GRID_H - 1)),
+      };
+
+      function idx(x, y) {
+        return y * GRID_W + x;
+      }
+
+      function getSolid(cell) {
+        const dmg = cell & 0xff;
+        const solidBit = (cell >> 8) & 1;
+        return solidBit === 1 && dmg < 255;
+      }
+
+      function setSolid(x, y, passable = false) {
+        if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return;
+        const p = passable ? (1 << 9) : 0;
+        simState.cpuCells[idx(x, y)] = (1 << 8) | p;
+      }
+
+      function bondHAt(x, y) {
+        if (x < 0 || x >= GRID_W - 1 || y < 0 || y >= GRID_H) return 0;
+        return simState.bondsH[y * (GRID_W - 1) + x] & 0xff;
+      }
+
+      function bondVAt(x, y) {
+        if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H - 1) return 0;
+        return simState.bondsV[y * GRID_W + x] & 0xff;
+      }
+
+      function hasVerticalSupport(x, y, cells = simState.cpuCells) {
+        if (y + 1 >= GRID_H) return true;
+        if (!getSolid(cells[idx(x, y + 1)])) return false;
+        return bondVAt(x, y) >= SUPPORT_TH;
+      }
+
+      function isSupported(x, y, cells = simState.cpuCells) {
+        if (hasVerticalSupport(x, y, cells)) return true;
+        let lx = x;
+        for (let i = 0; i < HORIZONTAL_SUPPORT_RANGE; i++) {
+          if (lx <= 0) break;
+          const bond = bondHAt(lx - 1, y);
+          if (bond < COHESION_TH) break;
+          lx--;
+          if (!getSolid(cells[idx(lx, y)])) break;
+          if (hasVerticalSupport(lx, y, cells)) return true;
+        }
+        let rx = x;
+        for (let i = 0; i < HORIZONTAL_SUPPORT_RANGE; i++) {
+          if (rx + 1 >= GRID_W) break;
+          const bond = bondHAt(rx, y);
+          if (bond < COHESION_TH) break;
+          rx++;
+          if (!getSolid(cells[idx(rx, y)])) break;
+          if (hasVerticalSupport(rx, y, cells)) return true;
+        }
+        return false;
+      }
+
+      function emptyAt(x, y) {
+        if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return true;
+        return !getSolid(simState.cpuCells[idx(x, y)]);
+      }
+
+      function supportAllowsFall(x, y, cells) {
+        return !isSupported(x, y, cells);
+      }
+
+      function simulateBondDecay() {
+        for (let y = 0; y < GRID_H; y++) {
+          for (let x = 0; x < GRID_W - 1; x++) {
+            const a = simState.cpuCells[idx(x, y)];
+            const b = simState.cpuCells[idx(x + 1, y)];
+            if (!getSolid(a) || !getSolid(b)) {
+              const bi = y * (GRID_W - 1) + x;
+              const s = simState.bondsH[bi] & 0xff;
+              if (s > 0) {
+                simState.bondsH[bi] = Math.max(0, s - 10);
+              }
+            }
+          }
+        }
+
+        for (let y = 0; y < GRID_H - 1; y++) {
+          for (let x = 0; x < GRID_W; x++) {
+            const a = simState.cpuCells[idx(x, y)];
+            const b = simState.cpuCells[idx(x, y + 1)];
+            if (!getSolid(a) || !getSolid(b)) {
+              const bi = y * GRID_W + x;
+              const s = simState.bondsV[bi] & 0xff;
+              if (s > 0) {
+                simState.bondsV[bi] = Math.max(0, s - 10);
+              }
+            }
+          }
+        }
+      }
+
+      function simulateStep(frame) {
+        const newCells = new Uint32Array(simState.cpuCells);
+        let moveCount = 0;
+
+        function solidInNew(x, y) {
+          if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
+          return getSolid(newCells[idx(x, y)]);
+        }
+
+        function emptyInNew(x, y) {
+          if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return true;
+          return !getSolid(newCells[idx(x, y)]);
+        }
+
+        function cohesionOkLocal(x, y) {
+          if (x > 0) {
+            const b = bondHAt(x - 1, y);
+            if (b >= COHESION_TH && solidInNew(x - 1, y)) {
+              if (y + 1 >= GRID_H || !emptyInNew(x - 1, y + 1)) return false;
+            }
+          }
+          if (x + 1 < GRID_W) {
+            const b = bondHAt(x, y);
+            if (b >= COHESION_TH && solidInNew(x + 1, y)) {
+              if (y + 1 >= GRID_H || !emptyInNew(x + 1, y + 1)) return false;
+            }
+          }
+          return true;
+        }
+
+        for (let y = GRID_H - 2; y >= 0; y--) {
+          for (let x = 0; x < GRID_W; x++) {
+            const i = idx(x, y);
+            const c = newCells[i];
+            if (!getSolid(c)) continue;
+            if (((x + y + (frame & 1)) & 1) !== 0) continue;
+
+            if (y + 1 < GRID_H) {
+              const belowI = idx(x, y + 1);
+              const belowC = newCells[belowI];
+              if (!getSolid(belowC) && supportAllowsFall(x, y, newCells) && cohesionOkLocal(x, y)) {
+                newCells[belowI] = c;
+                newCells[i] = 0;
+                moveCount++;
+                continue;
+              }
+
+              if (getSolid(belowC)) {
+                if (x > 0) {
+                  const dlI = idx(x - 1, y + 1);
+                  const dlC = newCells[dlI];
+                  if (!getSolid(dlC)) {
+                    const hb = bondHAt(x - 1, y);
+                    if (hb < COHESION_TH && supportAllowsFall(x, y, newCells) && cohesionOkLocal(x, y)) {
+                      newCells[dlI] = c;
+                      newCells[i] = 0;
+                      moveCount++;
+                      continue;
+                    }
+                  }
+                }
+                if (x + 1 < GRID_W) {
+                  const drI = idx(x + 1, y + 1);
+                  const drC = newCells[drI];
+                  if (!getSolid(drC)) {
+                    const hb = bondHAt(x, y);
+                    if (hb < COHESION_TH && supportAllowsFall(x, y, newCells) && cohesionOkLocal(x, y)) {
+                      newCells[drI] = c;
+                      newCells[i] = 0;
+                      moveCount++;
+                      continue;
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+
+        simState.cpuCells.set(newCells);
+        return moveCount;
+      }
+
+      function countSolidCells() {
+        let count = 0;
+        for (let i = 0; i < simState.cpuCells.length; i++) {
+          if (getSolid(simState.cpuCells[i])) count++;
+        }
+        return count;
+      }
+
+      function resetSimulation() {
+        simState.cpuCells.fill(0);
+        simState.bondsH.fill(255);
+        simState.bondsV.fill(255);
+        simState.frame = 0;
+        const structure = structureById.get(editorState.currentId);
+        if (structure) {
+          const groundY = GRID_H - 6;
+          for (let y = groundY; y < GRID_H; y++) {
+            for (let x = 0; x < GRID_W; x++) setSolid(x, y, false);
+          }
+          const offsetX = Math.max(0, Math.floor((GRID_W - structure.width) / 2));
+          const offsetY = Math.max(0, groundY - structure.height);
+          for (let y = 0; y < structure.height; y++) {
+            for (let x = 0; x < structure.width; x++) {
+              const tile = structure.tiles[y * structure.width + x];
+              if (!tile) continue;
+              setSolid(offsetX + x, offsetY + y, tile.passable);
+            }
+          }
+        }
+        updateSimStatus(0, 0);
+      }
+
+      function updateSimStatus(lastMoves, totalMoves) {
+        const solidCount = countSolidCells();
+        const stable = lastMoves === 0;
+        ui.simStatus.textContent = `Frame ${simState.frame} · Last moves: ${lastMoves} · Total moves: ${totalMoves} · Solid cells: ${solidCount} · Stable: ${stable ? "Yes" : "No"}`;
+      }
+
+      ui.simReset.addEventListener("click", resetSimulation);
+      ui.simStep.addEventListener("click", () => {
+        simulateBondDecay();
+        const moves = simulateStep(simState.frame);
+        simState.frame += 1;
+        updateSimStatus(moves, moves);
+      });
+
+      ui.simRun.addEventListener("click", () => {
+        const steps = Math.max(1, Number.parseInt(ui.simSteps.value, 10) || 1);
+        let totalMoves = 0;
+        for (let i = 0; i < steps; i++) {
+          simulateBondDecay();
+          totalMoves += simulateStep(simState.frame);
+          simState.frame += 1;
+        }
+        updateSimStatus(totalMoves, totalMoves);
+      });
+
+      rebuildStructureMap();
+      renderStructureList();
+      drawEditorCanvas();
+      resetSimulation();
+    </script>
+  </body>
+</html>
