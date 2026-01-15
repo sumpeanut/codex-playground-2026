@@ -372,7 +372,7 @@
     let totalBlockedTime = 0;
     
     function initPathWorker() {
-      pathWorker = new Worker('./pathfinding-worker.js');
+      pathWorker = new Worker('/src/pathfinding/worker.js', { type: 'module' });
       
       pathWorker.onmessage = function(e) {
         const { type, data } = e.data;
