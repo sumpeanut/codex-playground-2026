@@ -7,6 +7,21 @@
     <style>
       html, body { margin: 0; height: 100%; background: #111; color: #ddd; font-family: system-ui, sans-serif; }
       #ui { position: fixed; left: 12px; top: 12px; background: rgba(0,0,0,.55); padding: 10px 12px; border-radius: 10px; }
+      #editorPanel { position: fixed; right: 12px; top: 12px; width: 320px; background: rgba(0,0,0,.6); padding: 12px; border-radius: 12px; border: 1px solid #222; max-height: calc(100vh - 24px); overflow: auto; }
+      #editorPanel h2 { margin: 0 0 8px; font-size: 16px; }
+      .editor-controls { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+      .editor-controls button { padding: 4px 8px; }
+      .editor-row { display: flex; gap: 8px; align-items: center; margin-bottom: 8px; flex-wrap: wrap; }
+      .structure-list { display: grid; gap: 6px; margin-bottom: 10px; }
+      .structure-item { display: grid; grid-template-columns: 40px 1fr; gap: 8px; align-items: center; padding: 4px 6px; border-radius: 8px; border: 1px solid #222; background: #141414; cursor: pointer; }
+      .structure-item.active { border-color: #4aa3ff; box-shadow: 0 0 0 1px rgba(74,163,255,0.6); }
+      .structure-item canvas { width: 40px; height: 40px; background: #0e0e0e; border-radius: 4px; border: 1px solid #222; }
+      #editorCanvas { width: 100%; aspect-ratio: 1 / 1; border: 1px solid #222; background: #101010; image-rendering: pixelated; border-radius: 8px; display: block; }
+      .editor-grid-wrap { margin-bottom: 8px; }
+      .editor-legend { font-size: 12px; opacity: 0.8; }
+      dialog { background: #111; color: #ddd; border: 1px solid #333; border-radius: 10px; padding: 12px; }
+      dialog::backdrop { background: rgba(0,0,0,0.6); }
+      #structureData { width: 100%; min-height: 180px; background: #0c0c0c; color: #eee; border: 1px solid #333; border-radius: 6px; padding: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
       canvas { width: 100vw; height: 100vh; display: block; image-rendering: pixelated; }
       #overlay { position: fixed; inset: 0; pointer-events: none; }
       .row { display: flex; gap: 8px; align-items: center; margin-top: 6px; }
@@ -79,6 +94,52 @@
 
     <canvas id="c"></canvas>
     <canvas id="overlay"></canvas>
+    <div id="editorPanel">
+      <h2>Structure Editor</h2>
+      <div class="editor-controls">
+        <button id="editorNew">New</button>
+        <button id="editorRename">Rename</button>
+        <button id="editorDelete">Delete</button>
+        <button id="editorExport">Export</button>
+        <button id="editorImport">Import</button>
+      </div>
+
+      <div id="structureList" class="structure-list"></div>
+
+      <div class="editor-grid-wrap">
+        <canvas id="editorCanvas" width="320" height="320"></canvas>
+      </div>
+
+      <div class="editor-row">
+        <label>Paint
+          <select id="paintMode">
+            <option value="paint">Paint</option>
+            <option value="erase">Erase</option>
+          </select>
+        </label>
+        <label>Tile
+          <select id="tileType">
+            <option value="solid">Solid</option>
+            <option value="passable">Passable</option>
+          </select>
+        </label>
+        <label>Color
+          <input id="tileColor" type="color" value="#d0dbe8" />
+        </label>
+      </div>
+      <div class="editor-legend">Drag to paint. Passable tiles allow entities to walk through.</div>
+    </div>
+
+    <dialog id="structureModal">
+      <form method="dialog">
+        <h3 id="structureModalTitle">Structure Data</h3>
+        <textarea id="structureData" spellcheck="false"></textarea>
+        <div class="editor-row">
+          <button id="structureModalConfirm" value="confirm">Confirm</button>
+          <button value="cancel">Close</button>
+        </div>
+      </form>
+    </dialog>
     <script type="module" src="./main.js"></script>
   </body>
 </html>
