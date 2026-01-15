@@ -19,6 +19,9 @@ const ui = {
   structureMode: document.getElementById("structureMode"),
   structureSelect: document.getElementById("structureSelect"),
   structurePreview: document.getElementById("structurePreview"),
+  openEditor: document.getElementById("openEditor"),
+  editorDialog: document.getElementById("editorDialog"),
+  closeEditor: document.getElementById("closeEditor"),
   structureList: document.getElementById("structureList"),
   editorCanvas: document.getElementById("editorCanvas"),
   paintMode: document.getElementById("paintMode"),
@@ -267,6 +270,19 @@ ui.structureSelect?.addEventListener("change", (event) => {
 renderStructureList();
 drawEditorCanvas();
 syncEditorStateFromUI();
+
+function openEditorModal() {
+  if (!ui.editorDialog) return;
+  ui.editorDialog.showModal();
+}
+
+function closeEditorModal() {
+  if (!ui.editorDialog) return;
+  ui.editorDialog.close();
+}
+
+ui.openEditor?.addEventListener("click", openEditorModal);
+ui.closeEditor?.addEventListener("click", closeEditorModal);
 
 const dpr = window.devicePixelRatio || 1;
 function resizeCanvas() {
