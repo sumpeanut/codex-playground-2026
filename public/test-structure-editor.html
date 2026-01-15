@@ -32,6 +32,7 @@
         display: grid;
         grid-template-columns: minmax(320px, 1fr) 320px;
         gap: 20px;
+        align-content: start;
       }
       h1 {
         font-size: 18px;
@@ -120,7 +121,8 @@
         flex-direction: column;
         gap: 10px;
       }
-      #editorCanvas {
+      #editorCanvas,
+      #simCanvas {
         width: 100%;
         max-width: 720px;
         aspect-ratio: 1 / 1;
@@ -128,7 +130,17 @@
         border-radius: 12px;
         background: #0a0a0a;
       }
+      #simCanvas {
+        max-width: 480px;
+        aspect-ratio: 8 / 5;
+        background: #0b0b0b;
+      }
       .legend {
+        font-size: 12px;
+        color: #b0b0b0;
+        line-height: 1.5;
+      }
+      .sim-legend {
         font-size: 12px;
         color: #b0b0b0;
         line-height: 1.5;
@@ -222,6 +234,11 @@
           <div class="legend">
             Click + drag to paint. Use erase mode to clear tiles. Support tiles are passable but still provide stability.
           </div>
+          <h2>Simulation Preview</h2>
+          <canvas id="simCanvas" width="480" height="300"></canvas>
+          <div class="sim-legend">
+            Preview shows the current structure seeded into the stability grid. Tap Step/Simulate to confirm movement.
+          </div>
         </div>
         <section class="log">
           <h2>Storage instrumentation</h2>
@@ -247,6 +264,7 @@
         tileType: document.getElementById("tileType"),
         tileColor: document.getElementById("tileColor"),
         editorCanvas: document.getElementById("editorCanvas"),
+        simCanvas: document.getElementById("simCanvas"),
         storageLog: document.getElementById("storageLog"),
         simReset: document.getElementById("simReset"),
         simStep: document.getElementById("simStep"),
@@ -523,6 +541,7 @@
       // ===== Simulation =====
       const GRID_W = 160;
       const GRID_H = 100;
+      const simCtx = ui.simCanvas.getContext("2d");
       const COHESION_TH = 120;
       const SUPPORT_TH = 40;
       const HORIZONTAL_SUPPORT_RANGE = 6;
@@ -719,6 +738,23 @@
         return count;
       }
 
+      function drawSimulation() {
+        const scaleX = ui.simCanvas.width / GRID_W;
+        const scaleY = ui.simCanvas.height / GRID_H;
+        simCtx.clearRect(0, 0, ui.simCanvas.width, ui.simCanvas.height);
+        simCtx.fillStyle = "#0b0b0b";
+        simCtx.fillRect(0, 0, ui.simCanvas.width, ui.simCanvas.height);
+        for (let y = 0; y < GRID_H; y++) {
+          for (let x = 0; x < GRID_W; x++) {
+            const cell = simState.cpuCells[idx(x, y)];
+            if (!getSolid(cell)) continue;
+            const isSupport = ((cell >> 9) & 1) === 1;
+            simCtx.fillStyle = isSupport ? DEFAULT_PASSABLE_COLOR : DEFAULT_SOLID_COLOR;
+            simCtx.fillRect(x * scaleX, y * scaleY, scaleX + 0.5, scaleY + 0.5);
+          }
+        }
+      }
+
       function resetSimulation() {
         simState.cpuCells.fill(0);
         simState.bondsH.fill(255);
@@ -741,6 +777,7 @@
           }
         }
         updateSimStatus(0, 0);
+        drawSimulation();
       }
 
       function updateSimStatus(lastMoves, totalMoves) {
@@ -755,6 +792,7 @@
         const moves = simulateStep(simState.frame);
         simState.frame += 1;
         updateSimStatus(moves, moves);
+        drawSimulation();
       });
 
       ui.simRun.addEventListener("click", () => {
@@ -766,6 +804,7 @@
           simState.frame += 1;
         }
         updateSimStatus(totalMoves, totalMoves);
+        drawSimulation();
       });
 
       rebuildStructureMap();
