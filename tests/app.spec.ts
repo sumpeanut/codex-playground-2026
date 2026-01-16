@@ -1,4 +1,15 @@
-import { expect, test } from "@playwright/test";
+import fs from "node:fs";
+import { chromium, expect, test } from "@playwright/test";
+
+const hasChromium = (() => {
+  try {
+    return fs.existsSync(chromium.executablePath());
+  } catch {
+    return false;
+  }
+})();
+
+test.skip(!hasChromium, "Playwright Chromium binary not installed");
 
 test("debug harness loads with expected sections", async ({ page }) => {
   await page.goto("/tools/debug.html");
