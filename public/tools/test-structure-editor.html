@@ -248,7 +248,13 @@
     </div>
 
     <script type="module">
-      import { loadStructures, saveStructures, getDefaultStructures, STORAGE_KEY } from "/src/structures/storage.js";
+      import {
+        loadStructures,
+        saveStructures,
+        getDefaultStructures,
+        getStoredPayloadSize,
+        STORAGE_KEY,
+      } from "/src/structures/storage.js";
 
       const DEFAULT_SOLID_COLOR = "#d0dbe8";
       const DEFAULT_PASSABLE_COLOR = "#5a4a3a";
@@ -294,18 +300,16 @@
         console.info("Storage", type, details);
       }
 
-      const storedPayload = localStorage.getItem(STORAGE_KEY);
       logStorageEvent(
         "read",
-        `Loaded ${structures.length} structures from ${STORAGE_KEY} (${storedPayload?.length ?? 0} bytes)`
+        `Loaded ${structures.length} structures from ${STORAGE_KEY} (${getStoredPayloadSize()} bytes)`
       );
 
       function persistStructures(reason = "update") {
         saveStructures(structures);
-        const payload = localStorage.getItem(STORAGE_KEY);
         logStorageEvent(
           "write",
-          `${reason}: saved ${structures.length} structures (${payload?.length ?? 0} bytes)`
+          `${reason}: saved ${structures.length} structures (${getStoredPayloadSize()} bytes)`
         );
       }
 
