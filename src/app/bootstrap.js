@@ -1,9 +1,9 @@
 import { bindRangeLabels } from "../ui/controls.js";
 import { getUiElements } from "../ui/elements.js";
-import { createPathfinder } from "../pathfinding/core.js";
-import { createPathfindingWorkerClient } from "../pathfinding/client.js";
-import { createStructureManager } from "../structures/editor.js";
-import { loadStructures } from "../structures/storage.js";
+import { createPathfinder } from "../pathfinding/core.ts";
+import { createPathfindingWorkerClient } from "../pathfinding/client.ts";
+import { createStructureManager } from "../structures/editor.ts";
+import { loadStructures } from "../structures/storage.ts";
 import { GRID_H, GRID_W } from "../sim/constants.js";
 import { createEntitySystem } from "../sim/entities.js";
 import { createSimulationState } from "../sim/state.js";

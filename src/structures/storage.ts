@@ -1,9 +1,28 @@
-import { DEFAULT_PASSABLE_COLOR, DEFAULT_SOLID_COLOR } from "./utils.js";
+import { DEFAULT_PASSABLE_COLOR, DEFAULT_SOLID_COLOR, type Structure, type StructureTile } from "./utils.ts";
 
 const STORAGE_KEY = "ca.structures.v1";
 const STORAGE_VERSION = 1;
 
-function createTile({ passable = false, color } = {}) {
+type StructureGrid = {
+  width: number;
+  height: number;
+  tiles: Array<StructureTile | null>;
+};
+
+type TileOptions = {
+  passable?: boolean;
+  color?: string;
+};
+
+type StructureBuilder = (tools: {
+  rect: (x0: number, y0: number, w: number, height: number, options?: TileOptions) => void;
+  column: (x0: number, topY: number, bottomY: number, w?: number, passable?: boolean) => void;
+  floor: (x0: number, y: number, w: number, thick?: number, options?: TileOptions) => void;
+  setSolid: (x: number, y: number, options?: TileOptions) => void;
+  groundY: number;
+}) => void;
+
+function createTile({ passable = false, color }: TileOptions = {}): StructureTile {
   return {
     solid: true,
     passable,
@@ -11,16 +30,23 @@ function createTile({ passable = false, color } = {}) {
   };
 }
 
-function createGrid(width, height) {
+function createGrid(width: number, height: number): Array<StructureTile | null> {
   return Array.from({ length: width * height }, () => null);
 }
 
-function setSolid(tiles, width, height, x, y, options = {}) {
+function setSolid(
+  tiles: Array<StructureTile | null>,
+  width: number,
+  height: number,
+  x: number,
+  y: number,
+  options: TileOptions = {}
+): void {
   if (x < 0 || x >= width || y < 0 || y >= height) return;
   tiles[y * width + x] = createTile(options);
 }
 
-function trimStructureGrid(tiles, width, height) {
+function trimStructureGrid(tiles: Array<StructureTile | null>, width: number, height: number): StructureGrid {
   let minX = width;
   let minY = height;
   let maxX = -1;
@@ -42,7 +68,7 @@ function trimStructureGrid(tiles, width, height) {
 
   const trimmedWidth = maxX - minX + 1;
   const trimmedHeight = maxY - minY + 1;
-  const trimmedTiles = Array.from({ length: trimmedWidth * trimmedHeight }, () => null);
+  const trimmedTiles = Array.from({ length: trimmedWidth * trimmedHeight }, () => null as StructureTile | null);
 
   for (let y = minY; y <= maxY; y++) {
     for (let x = minX; x <= maxX; x++) {
@@ -57,19 +83,19 @@ function trimStructureGrid(tiles, width, height) {
   return { width: trimmedWidth, height: trimmedHeight, tiles: trimmedTiles };
 }
 
-function buildStructureFromTest(name, title, builder) {
+function buildStructureFromTest(name: string, title: string, builder: StructureBuilder): Structure {
   const gridWidth = 160;
   const gridHeight = 100;
   const tiles = createGrid(gridWidth, gridHeight);
   const groundY = gridHeight - 6;
 
-  const rect = (x0, y0, w, height, options) => {
+  const rect = (x0: number, y0: number, w: number, height: number, options?: TileOptions) => {
     for (let y = y0; y < y0 + height; y++) {
       for (let x = x0; x < x0 + w; x++) setSolid(tiles, gridWidth, gridHeight, x, y, options);
     }
   };
 
-  const column = (x0, topY, bottomY, w = 2, passable = true) => {
+  const column = (x0: number, topY: number, bottomY: number, w = 2, passable = true) => {
     for (let y = topY; y <= bottomY; y++) {
       for (let dx = 0; dx < w; dx++) {
         setSolid(tiles, gridWidth, gridHeight, x0 + dx, y, { passable });
@@ -77,13 +103,19 @@ function buildStructureFromTest(name, title, builder) {
     }
   };
 
-  const floor = (x0, y, w, thick = 2, options) => {
+  const floor = (x0: number, y: number, w: number, thick = 2, options?: TileOptions) => {
     for (let t = 0; t < thick; t++) {
       for (let x = x0; x < x0 + w; x++) setSolid(tiles, gridWidth, gridHeight, x, y + t, options);
     }
   };
 
-  builder({ rect, column, floor, setSolid: (x, y, options) => setSolid(tiles, gridWidth, gridHeight, x, y, options), groundY });
+  builder({
+    rect,
+    column,
+    floor,
+    setSolid: (x, y, options) => setSolid(tiles, gridWidth, gridHeight, x, y, options),
+    groundY,
+  });
 
   const trimmed = trimStructureGrid(tiles, gridWidth, gridHeight);
 
@@ -96,7 +128,7 @@ function buildStructureFromTest(name, title, builder) {
   };
 }
 
-export function getDefaultStructures() {
+export function getDefaultStructures(): Structure[] {
   return [
     buildStructureFromTest("unsupported", "Unsupported Beam", ({ floor, column, groundY }) => {
       floor(40, groundY - 20, 80, 2);
@@ -174,19 +206,24 @@ export function getDefaultStructures() {
   ];
 }
 
-function migrateStructures(rawData) {
+type StoredStructures = {
+  version: number;
+  structures: Structure[];
+};
+
+function migrateStructures(rawData: unknown): StoredStructures | null {
   if (Array.isArray(rawData)) {
-    return { version: STORAGE_VERSION, structures: rawData };
+    return { version: STORAGE_VERSION, structures: rawData as Structure[] };
   }
 
-  if (rawData && typeof rawData === "object" && Array.isArray(rawData.structures)) {
-    return { version: STORAGE_VERSION, structures: rawData.structures };
+  if (rawData && typeof rawData === "object" && Array.isArray((rawData as StoredStructures).structures)) {
+    return { version: STORAGE_VERSION, structures: (rawData as StoredStructures).structures };
   }
 
   return null;
 }
 
-export function saveStructures(structures) {
+export function saveStructures(structures: Structure[]): void {
   const payload = {
     version: STORAGE_VERSION,
     structures,
@@ -195,7 +232,7 @@ export function saveStructures(structures) {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(payload));
 }
 
-export function loadStructures() {
+export function loadStructures(): Structure[] {
   const stored = localStorage.getItem(STORAGE_KEY);
   if (!stored) {
     const defaults = getDefaultStructures();
@@ -203,7 +240,7 @@ export function loadStructures() {
     return defaults;
   }
 
-  let parsed;
+  let parsed: unknown;
   try {
     parsed = JSON.parse(stored);
   } catch {
@@ -212,8 +249,11 @@ export function loadStructures() {
     return defaults;
   }
 
-  if (parsed?.version === STORAGE_VERSION && Array.isArray(parsed.structures)) {
-    return parsed.structures;
+  if (parsed && typeof parsed === "object" && (parsed as StoredStructures).version === STORAGE_VERSION) {
+    const { structures } = parsed as StoredStructures;
+    if (Array.isArray(structures)) {
+      return structures;
+    }
   }
 
   const migrated = migrateStructures(parsed);

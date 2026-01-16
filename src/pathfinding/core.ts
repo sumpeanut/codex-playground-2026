@@ -1,11 +1,32 @@
-export function createPathfinder({ gridW, gridH, getCell }) {
+export type Pathfinder = {
+  findPath: (startX: number, startY: number, endX: number, endY: number) => Array<{ x: number; y: number }>;
+  isWalkable: (x: number, y: number) => boolean;
+  findNearestWalkable: (x: number, y: number) => { x: number; y: number } | null;
+  getSolid: (cell: number) => boolean;
+  getPassable: (cell: number) => boolean;
+  blocksEntity: (cell: number) => boolean;
+};
+
+export function createPathfinder({
+  gridW,
+  gridH,
+  getCell,
+}: {
+  gridW: number;
+  gridH: number;
+  getCell: (x: number, y: number) => number;
+}): Pathfinder {
   const GRID_W = gridW;
   const GRID_H = gridH;
 
   const MAX_JUMP_UP = 5;
   const MAX_JUMP_ACROSS = 3;
 
-  class BinaryHeap {
+  type HeapNode<T> = { key: number; priority: number; data: T };
+
+  class BinaryHeap<T> {
+    nodes: Array<HeapNode<T>>;
+
     constructor() {
       this.nodes = [];
     }
@@ -14,24 +35,24 @@ export function createPathfinder({ gridW, gridH, getCell }) {
       return this.nodes.length;
     }
 
-    push(key, priority, data) {
+    push(key: number, priority: number, data: T) {
       const node = { key, priority, data };
       this.nodes.push(node);
       this._bubbleUp(this.nodes.length - 1);
     }
 
-    pop() {
+    pop(): HeapNode<T> | null {
       if (this.nodes.length === 0) return null;
       const min = this.nodes[0];
       const last = this.nodes.pop();
-      if (this.nodes.length > 0) {
+      if (this.nodes.length > 0 && last) {
         this.nodes[0] = last;
         this._sinkDown(0);
       }
       return min;
     }
 
-    _bubbleUp(i) {
+    _bubbleUp(i: number) {
       const node = this.nodes[i];
       const priority = node.priority;
       while (i > 0) {
@@ -44,7 +65,7 @@ export function createPathfinder({ gridW, gridH, getCell }) {
       this.nodes[i] = node;
     }
 
-    _sinkDown(i) {
+    _sinkDown(i: number) {
       const length = this.nodes.length;
       const node = this.nodes[i];
       const priority = node.priority;
@@ -68,24 +89,24 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     }
   }
 
-  function getSolid(cell) {
+  function getSolid(cell: number) {
     const dmg = cell & 0xff;
     const solidBit = (cell >> 8) & 1;
     return solidBit === 1 && dmg < 255;
   }
 
-  function getPassable(cell) {
+  function getPassable(cell: number) {
     return ((cell >> 9) & 1) === 1;
   }
 
-  function blocksEntity(cell) {
+  function blocksEntity(cell: number) {
     return getSolid(cell) && !getPassable(cell);
   }
 
-  const nodeKey = (x, y) => y * GRID_W + x;
-  const keyToXY = (key) => ({ x: key % GRID_W, y: Math.floor(key / GRID_W) });
+  const nodeKey = (x: number, y: number) => y * GRID_W + x;
+  const keyToXY = (key: number) => ({ x: key % GRID_W, y: Math.floor(key / GRID_W) });
 
-  function isWalkable(x, y) {
+  function isWalkable(x: number, y: number) {
     if (x < 0 || x >= GRID_W || y < 0 || y >= GRID_H) return false;
     const cell = getCell(x, y);
     if (blocksEntity(cell)) return false;
@@ -94,7 +115,7 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     return getSolid(below);
   }
 
-  function isJumpPathClear(x1, y1, x2, y2) {
+  function isJumpPathClear(x1: number, y1: number, x2: number, y2: number) {
     const dx = x2 - x1;
     const dy = y2 - y1;
 
@@ -132,7 +153,7 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     return true;
   }
 
-  function isEdgeDropClear(x1, y1, x2, y2) {
+  function isEdgeDropClear(x1: number, y1: number, x2: number, y2: number) {
     const edgeCell = getCell(x2, y1);
     if (blocksEntity(edgeCell)) return false;
 
@@ -144,7 +165,7 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     return true;
   }
 
-  function canTraverse(x1, y1, x2, y2) {
+  function canTraverse(x1: number, y1: number, x2: number, y2: number) {
     if (!isWalkable(x2, y2)) return false;
     const dx = x2 - x1;
     const dy = y2 - y1;
@@ -167,7 +188,7 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     return false;
   }
 
-  function getTraversalCost(x1, y1, x2, y2) {
+  function getTraversalCost(x1: number, y1: number, x2: number, y2: number) {
     const dx = Math.abs(x2 - x1);
     const dy = Math.abs(y2 - y1);
 
@@ -178,12 +199,18 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     return Math.sqrt(dx * dx + dy * dy) * 1.5;
   }
 
-  function getPossibleMoves(x, y) {
-    const moves = [];
+  function getPossibleMoves(x: number, y: number) {
+    const moves: Array<[number, number]> = [];
 
-    const walkDirs = [
-      [-1, 0], [1, 0], [0, -1], [0, 1],
-      [-1, -1], [1, -1], [-1, 1], [1, 1],
+    const walkDirs: Array<[number, number]> = [
+      [-1, 0],
+      [1, 0],
+      [0, -1],
+      [0, 1],
+      [-1, -1],
+      [1, -1],
+      [-1, 1],
+      [1, 1],
     ];
     for (const [dx, dy] of walkDirs) {
       moves.push([dx, dy]);
@@ -228,11 +255,11 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     return moves;
   }
 
-  function heuristic(x1, y1, x2, y2) {
+  function heuristic(x1: number, y1: number, x2: number, y2: number) {
     return Math.max(Math.abs(x2 - x1), Math.abs(y2 - y1));
   }
 
-  function findNearestWalkable(x, y) {
+  function findNearestWalkable(x: number, y: number) {
     if (isWalkable(x, y)) return { x, y };
     for (let r = 1; r < 20; r++) {
       for (let dy = -r; dy <= r; dy++) {
@@ -247,7 +274,7 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     return null;
   }
 
-  function findPath(startX, startY, endX, endY) {
+  function findPath(startX: number, startY: number, endX: number, endY: number) {
     startX = Math.max(0, Math.min(GRID_W - 1, startX));
     startY = Math.max(0, Math.min(GRID_H - 1, startY));
     endX = Math.max(0, Math.min(GRID_W - 1, endX));
@@ -261,9 +288,9 @@ export function createPathfinder({ gridW, gridH, getCell }) {
     }
 
     const endKey = nodeKey(end.x, end.y);
-    const nodes = new Map();
-    const closedSet = new Set();
-    const openSet = new BinaryHeap();
+    const nodes = new Map<number, { g: number; parent: number | null }>();
+    const closedSet = new Set<number>();
+    const openSet = new BinaryHeap<{ x: number; y: number }>();
 
     const startKey = nodeKey(start.x, start.y);
     const startH = heuristic(start.x, start.y, end.x, end.y);
@@ -286,19 +313,19 @@ export function createPathfinder({ gridW, gridH, getCell }) {
       if (closedSet.has(currentKey)) continue;
 
       if (currentKey === endKey) {
-        const path = [];
-        let ck = currentKey;
+        const path: Array<{ x: number; y: number }> = [];
+        let ck: number | null = currentKey;
         while (ck !== null && nodes.has(ck)) {
           const { x, y } = keyToXY(ck);
           path.unshift({ x, y });
-          ck = nodes.get(ck).parent;
+          ck = nodes.get(ck)?.parent ?? null;
         }
         if (path.length > 0) path.shift();
         return path;
       }
 
       closedSet.add(currentKey);
-      const currentG = nodes.get(currentKey).g;
+      const currentG = nodes.get(currentKey)?.g ?? 0;
 
       const moves = getPossibleMoves(cx, cy);
 

@@ -2,12 +2,30 @@ export const DEFAULT_SOLID_COLOR = "#d0dbe8";
 export const DEFAULT_PASSABLE_COLOR = "#5a4a3a";
 export const DEFAULT_EDITOR_SIZE = 24;
 
-export function createStructureId(name) {
+export type StructureTile = {
+  solid: boolean;
+  passable: boolean;
+  color?: string;
+};
+
+export type Structure = {
+  id: string;
+  name?: string;
+  width: number;
+  height: number;
+  tiles: Array<StructureTile | null>;
+};
+
+export function createStructureId(name: string): string {
   const safe = name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");
   return `custom-${safe || "structure"}-${Date.now().toString(36)}`;
 }
 
-export function createEmptyStructure(name, width = DEFAULT_EDITOR_SIZE, height = DEFAULT_EDITOR_SIZE) {
+export function createEmptyStructure(
+  name: string,
+  width: number = DEFAULT_EDITOR_SIZE,
+  height: number = DEFAULT_EDITOR_SIZE
+): Structure {
   return {
     id: createStructureId(name),
     name,
@@ -17,7 +35,7 @@ export function createEmptyStructure(name, width = DEFAULT_EDITOR_SIZE, height =
   };
 }
 
-export function encodeColor565(hexColor) {
+export function encodeColor565(hexColor?: string | null): number {
   if (!hexColor) return 0;
   const hex = hexColor.startsWith("#") ? hexColor.slice(1) : hexColor;
   if (hex.length !== 6) return 0;
