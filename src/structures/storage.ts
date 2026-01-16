@@ -216,13 +216,158 @@ type StoredStructures = {
   structures: Structure[];
 };
 
-function migrateStructures(rawData: unknown): StoredStructures | null {
-  if (Array.isArray(rawData)) {
-    return { version: STORAGE_VERSION, structures: rawData as Structure[] };
+type StoredStructuresPayload = StoredStructures & {
+  updatedAt?: string;
+};
+
+type ValidationResult<T> = {
+  value: T | null;
+  errors: string[];
+};
+
+const MAX_ERROR_DETAILS = 5;
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object";
+}
+
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
+function validateStructureTile(value: unknown, path: string, errors: string[]): void {
+  if (!isRecord(value)) {
+    errors.push(`${path} is not an object`);
+    return;
   }
 
-  if (rawData && typeof rawData === "object" && Array.isArray((rawData as StoredStructures).structures)) {
-    return { version: STORAGE_VERSION, structures: (rawData as StoredStructures).structures };
+  if (typeof value.solid !== "boolean") {
+    errors.push(`${path}.solid must be a boolean`);
+  }
+
+  if (typeof value.passable !== "boolean") {
+    errors.push(`${path}.passable must be a boolean`);
+  }
+
+  if (value.color !== undefined && typeof value.color !== "string") {
+    errors.push(`${path}.color must be a string`);
+  }
+}
+
+function validateStructure(value: unknown, index: number, errors: string[]): void {
+  const basePath = `structures[${index}]`;
+  if (!isRecord(value)) {
+    errors.push(`${basePath} is not an object`);
+    return;
+  }
+
+  if (typeof value.id !== "string") {
+    errors.push(`${basePath}.id must be a string`);
+  }
+
+  if (value.name !== undefined && typeof value.name !== "string") {
+    errors.push(`${basePath}.name must be a string`);
+  }
+
+  if (!isFiniteNumber(value.width) || value.width < 0) {
+    errors.push(`${basePath}.width must be a non-negative number`);
+  }
+
+  if (!isFiniteNumber(value.height) || value.height < 0) {
+    errors.push(`${basePath}.height must be a non-negative number`);
+  }
+
+  if (!Array.isArray(value.tiles)) {
+    errors.push(`${basePath}.tiles must be an array`);
+    return;
+  }
+
+  if (isFiniteNumber(value.width) && isFiniteNumber(value.height)) {
+    const expectedLength = value.width * value.height;
+    if (value.tiles.length !== expectedLength) {
+      errors.push(`${basePath}.tiles must have length ${expectedLength}`);
+    }
+  }
+
+  value.tiles.forEach((tile, tileIndex) => {
+    const tilePath = `${basePath}.tiles[${tileIndex}]`;
+    if (tile === null) return;
+    validateStructureTile(tile, tilePath, errors);
+  });
+}
+
+function validateStructureArray(data: unknown): ValidationResult<Structure[]> {
+  const errors: string[] = [];
+  if (!Array.isArray(data)) {
+    errors.push("structures is not an array");
+    return { value: null, errors };
+  }
+
+  data.forEach((structure, index) => validateStructure(structure, index, errors));
+
+  if (errors.length > 0) {
+    return { value: null, errors };
+  }
+
+  return { value: data as Structure[], errors };
+}
+
+function validateStoredPayload(data: unknown): ValidationResult<StoredStructuresPayload> {
+  const errors: string[] = [];
+  if (!isRecord(data)) {
+    errors.push("payload is not an object");
+    return { value: null, errors };
+  }
+
+  if (!isFiniteNumber(data.version)) {
+    errors.push("payload.version must be a number");
+  }
+
+  if (data.updatedAt !== undefined && typeof data.updatedAt !== "string") {
+    errors.push("payload.updatedAt must be a string");
+  }
+
+  const structureValidation = validateStructureArray(data.structures);
+  if (structureValidation.errors.length > 0) {
+    errors.push(...structureValidation.errors.map((err) => `payload.${err}`));
+  }
+
+  if (errors.length > 0) {
+    return { value: null, errors };
+  }
+
+  return {
+    value: {
+      version: data.version as number,
+      structures: structureValidation.value ?? [],
+      updatedAt: data.updatedAt as string | undefined,
+    },
+    errors,
+  };
+}
+
+function logStorageValidationFailure(context: string, errors: string[], rawData: unknown): void {
+  const message = errors.slice(0, MAX_ERROR_DETAILS).join("; ");
+  console.warn(`[storage] ${context} failed validation: ${message}`, rawData);
+}
+
+function migrateStructures(rawData: unknown): StoredStructures | null {
+  if (Array.isArray(rawData)) {
+    const validation = validateStructureArray(rawData);
+    if (!validation.value) {
+      logStorageValidationFailure("Legacy structure array", validation.errors, rawData);
+      return null;
+    }
+    return { version: STORAGE_VERSION, structures: validation.value };
+  }
+
+  if (isRecord(rawData) && Array.isArray(rawData.structures)) {
+    const validation = validateStructureArray(rawData.structures);
+    if (!validation.value) {
+      logStorageValidationFailure("Legacy structure payload", validation.errors, rawData);
+      return null;
+    }
+    return { version: STORAGE_VERSION, structures: validation.value };
   }
 
   return null;
@@ -248,17 +393,19 @@ export function loadStructures(): Structure[] {
   let parsed: unknown;
   try {
     parsed = JSON.parse(stored);
-  } catch {
+  } catch (error) {
+    console.warn("[storage] Failed to parse stored structures JSON.", error);
     const defaults = getDefaultStructures();
     saveStructures(defaults);
     return defaults;
   }
 
-  if (parsed && typeof parsed === "object" && (parsed as StoredStructures).version === STORAGE_VERSION) {
-    const { structures } = parsed as StoredStructures;
-    if (Array.isArray(structures)) {
-      return structures;
+  if (isRecord(parsed) && parsed.version === STORAGE_VERSION) {
+    const validation = validateStoredPayload(parsed);
+    if (validation.value) {
+      return validation.value.structures;
     }
+    logStorageValidationFailure("Stored payload", validation.errors, parsed);
   }
 
   const migrated = migrateStructures(parsed);
@@ -270,6 +417,15 @@ export function loadStructures(): Structure[] {
   const defaults = getDefaultStructures();
   saveStructures(defaults);
   return defaults;
+}
+
+export function getStoredPayload(): string | null {
+  return localStorage.getItem(STORAGE_KEY);
+}
+
+export function getStoredPayloadSize(): number {
+  const payload = getStoredPayload();
+  return payload?.length ?? 0;
 }
 
 export { STORAGE_KEY, STORAGE_VERSION };
