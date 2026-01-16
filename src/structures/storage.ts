@@ -1,4 +1,4 @@
-import { DEFAULT_PASSABLE_COLOR, DEFAULT_SOLID_COLOR, type Structure, type StructureTile } from "./utils.js";
+import { DEFAULT_PASSABLE_COLOR, DEFAULT_SOLID_COLOR, type Structure, type StructureTile } from "./utils.ts";
 
 const STORAGE_KEY = "ca.structures.v1";
 const STORAGE_VERSION = 1;

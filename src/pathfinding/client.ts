@@ -30,7 +30,7 @@ export function createPathfindingWorkerClient({
 
   function init() {
     if (pathWorker) return;
-    pathWorker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
+    pathWorker = new Worker(new URL("./worker.ts", import.meta.url), { type: "module" });
 
     pathWorker.onmessage = function (event: MessageEvent<PathfindingWorkerMessage>) {
       const { type, data } = event.data;

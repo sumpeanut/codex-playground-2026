@@ -7,8 +7,8 @@ import {
   encodeColor565,
   type Structure,
   type StructureTile,
-} from "./utils.js";
-import { saveStructures } from "./storage.js";
+} from "./utils.ts";
+import { saveStructures } from "./storage.ts";
 
 type StructureEditorUI = {
   structurePreview?: HTMLCanvasElement | null;

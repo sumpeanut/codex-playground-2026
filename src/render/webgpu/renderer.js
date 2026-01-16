@@ -1,6 +1,6 @@
 import { buildQuadTree, drawQuadTree } from "../../sim/quadtree.js";
 import { createDefaultWorld } from "../../sim/world.js";
-import { encodeColor565 } from "../../structures/utils.js";
+import { encodeColor565 } from "../../structures/utils.ts";
 import shaderSource from "./shaders/shaders.wgsl?raw";
 
 export async function initRenderer({

@@ -1,4 +1,4 @@
-import { createPathfinder, type Pathfinder } from "./core.js";
+import { createPathfinder, type Pathfinder } from "./core.ts";
 
 type InitMessage = { type: "init"; data: { gridW: number; gridH: number; cells: ArrayBuffer } };
 
