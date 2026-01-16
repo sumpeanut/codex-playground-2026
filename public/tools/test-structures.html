@@ -122,7 +122,47 @@
 
     <canvas id="c"></canvas>
     <canvas id="overlay"></canvas>
+    <!--
+      CA test harness:
+      - window.caTest.run() / window.caTest.getStatus()
+      - postMessage events: ca-test-status, ca-test-result
+      - supports ?autorun=1
+    -->
     <script type="module">
+const caTestState = {
+  name: 'structures',
+  status: 'idle',
+  passed: null,
+  details: null,
+};
+
+function postCaStatus(status, details = null) {
+  caTestState.status = status;
+  caTestState.details = details;
+  if (window.parent) {
+    window.parent.postMessage({
+      type: 'ca-test-status',
+      name: caTestState.name,
+      status,
+      details,
+    }, '*');
+  }
+}
+
+function postCaResult(passed, details = null) {
+  caTestState.status = passed ? 'pass' : 'fail';
+  caTestState.passed = passed;
+  caTestState.details = details;
+  if (window.parent) {
+    window.parent.postMessage({
+      type: 'ca-test-result',
+      name: caTestState.name,
+      passed,
+      details,
+    }, '*');
+  }
+}
+
 const canvas = document.getElementById("c");
 const overlay = document.getElementById("overlay");
 
@@ -538,6 +578,26 @@ async function init() {
   ui.reset.addEventListener("click", clearWorld);
 
   clearWorld();
+
+  async function runCaSuite() {
+    if (caTestState.status === 'running') return;
+    postCaStatus('running');
+    const details = {
+      manualOnly: true,
+      reason: 'Structure stability requires interactive validation.',
+    };
+    postCaResult(false, details);
+  }
+
+  window.caTest = {
+    run: runCaSuite,
+    getStatus: () => ({ ...caTestState }),
+  };
+
+  const autorun = new URLSearchParams(window.location.search).get('autorun') === '1';
+  if (autorun) {
+    runCaSuite();
+  }
 
   function drawBonds() {
     if (!ui.showBonds.checked) return;

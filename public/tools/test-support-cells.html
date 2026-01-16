@@ -60,7 +60,46 @@
   <canvas id="debugCanvas" width="512" height="288"></canvas>
   <pre id="log"></pre>
 
+  <!--
+    CA test harness:
+    - window.caTest.run() / window.caTest.getStatus()
+    - postMessage events: ca-test-status, ca-test-result
+    - supports ?autorun=1
+  -->
   <script>
+    const caTestState = {
+      name: 'support-cells',
+      status: 'idle',
+      passed: null,
+      details: null,
+    };
+
+    function postCaStatus(status, details = null) {
+      caTestState.status = status;
+      caTestState.details = details;
+      if (window.parent) {
+        window.parent.postMessage({
+          type: 'ca-test-status',
+          name: caTestState.name,
+          status,
+          details,
+        }, '*');
+      }
+    }
+
+    function postCaResult(passed, details = null) {
+      caTestState.status = passed ? 'pass' : 'fail';
+      caTestState.passed = passed;
+      caTestState.details = details;
+      if (window.parent) {
+        window.parent.postMessage({
+          type: 'ca-test-result',
+          name: caTestState.name,
+          passed,
+          details,
+        }, '*');
+      }
+    }
     const GRID_W = 256;
     const GRID_H = 144;
     const results = document.getElementById('results');
@@ -1074,9 +1113,23 @@
     document.getElementById('runAll').addEventListener('click', runAllTests);
     document.getElementById('stopTest').addEventListener('click', stopAnimation);
     
-    // Run first test by default
-    if (testElements.length > 0) {
-      runAnimatedTest(testElements[0].test, testElements[0].element);
+    async function runCaSuite() {
+      if (caTestState.status === 'running') return;
+      postCaStatus('running');
+      await runAllTests();
+      const passed = testElements.filter(({ element }) => element.className.includes('pass')).length;
+      const failed = testElements.filter(({ element }) => element.className.includes('fail')).length;
+      postCaResult(failed === 0, { passed, failed, total: testElements.length });
+    }
+
+    window.caTest = {
+      run: runCaSuite,
+      getStatus: () => ({ ...caTestState }),
+    };
+
+    const autorun = new URLSearchParams(window.location.search).get('autorun') === '1';
+    if (autorun) {
+      runCaSuite();
     }
   </script>
 </body>

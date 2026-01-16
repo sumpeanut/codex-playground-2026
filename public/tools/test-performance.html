@@ -315,7 +315,47 @@
     <pre id="log"></pre>
   </div>
 
+  <!--
+    CA test harness:
+    - window.caTest.run() / window.caTest.getStatus()
+    - postMessage events: ca-test-status, ca-test-result
+    - supports ?autorun=1
+  -->
   <script>
+    const caTestState = {
+      name: 'performance',
+      status: 'idle',
+      passed: null,
+      details: null,
+    };
+
+    function postCaStatus(status, details = null) {
+      caTestState.status = status;
+      caTestState.details = details;
+      if (window.parent) {
+        window.parent.postMessage({
+          type: 'ca-test-status',
+          name: caTestState.name,
+          status,
+          details,
+        }, '*');
+      }
+    }
+
+    function postCaResult(passed, details = null) {
+      caTestState.status = passed ? 'pass' : 'fail';
+      caTestState.passed = passed;
+      caTestState.details = details;
+      if (window.parent) {
+        window.parent.postMessage({
+          type: 'ca-test-result',
+          name: caTestState.name,
+          passed,
+          details,
+        }, '*');
+      }
+    }
+
     // ---- Constants ----
     const GRID_W = 256;
     const GRID_H = 144;
@@ -1462,6 +1502,26 @@
     
     document.getElementById('stopTest').addEventListener('click', stopTest);
     
+    async function runCaSuite() {
+      if (caTestState.status === 'running') return;
+      postCaStatus('running');
+      const details = {
+        manualOnly: true,
+        reason: 'Performance scenarios are interactive and require manual review.',
+      };
+      postCaResult(false, details);
+    }
+
+    window.caTest = {
+      run: runCaSuite,
+      getStatus: () => ({ ...caTestState }),
+    };
+
+    const autorun = new URLSearchParams(window.location.search).get('autorun') === '1';
+    if (autorun) {
+      runCaSuite();
+    }
+
     // ---- Initial Setup ----
     generateMap('simple');
     drawGrid();
