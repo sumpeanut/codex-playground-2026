@@ -1,0 +1,153 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>CA Debug Harness</title>
+    <style>
+      :root {
+        color-scheme: dark;
+      }
+      body {
+        margin: 0;
+        font-family: system-ui, sans-serif;
+        background: #0f0f0f;
+        color: #e5e5e5;
+      }
+      header {
+        padding: 24px;
+        border-bottom: 1px solid #222;
+        background: #131313;
+      }
+      h1 {
+        margin: 0 0 8px;
+        font-size: 22px;
+      }
+      main {
+        max-width: 960px;
+        margin: 0 auto;
+        padding: 24px;
+        display: grid;
+        gap: 20px;
+      }
+      .card {
+        border: 1px solid #222;
+        border-radius: 12px;
+        padding: 16px 18px;
+        background: #151515;
+      }
+      .card h2 {
+        margin: 0 0 8px;
+        font-size: 16px;
+        color: #7fd0ff;
+      }
+      .links {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+      }
+      a.button {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 8px 12px;
+        border-radius: 8px;
+        border: 1px solid #2b2b2b;
+        background: #1e1e1e;
+        color: #e5e5e5;
+        text-decoration: none;
+        font-size: 14px;
+      }
+      a.button:hover {
+        background: #242424;
+      }
+      ul {
+        margin: 8px 0 0;
+        padding-left: 20px;
+      }
+      li {
+        margin: 4px 0;
+        line-height: 1.4;
+      }
+      details {
+        border-top: 1px solid #222;
+        padding-top: 12px;
+        margin-top: 12px;
+      }
+      summary {
+        cursor: pointer;
+        font-weight: 600;
+      }
+      code {
+        background: #101010;
+        border: 1px solid #222;
+        padding: 2px 6px;
+        border-radius: 6px;
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>CA Debug Harness</h1>
+      <p>
+        Consolidated manual checks for pathfinding, structures, and simulation flows. Open the main
+        experience (requires WebGPU) and use the checklists below to validate behavior.
+      </p>
+      <div class="links">
+        <a class="button" href="../index.html" target="_blank" rel="noreferrer">Open main simulation</a>
+        <a class="button" href="../index.html#editor" target="_blank" rel="noreferrer">Open editor</a>
+      </div>
+    </header>
+    <main>
+      <section class="card" data-testid="debug-section-pathfinding">
+        <h2>Pathfinding</h2>
+        <ul>
+          <li>Spawn an entity using <code>Spawn Entity</code> and verify it selects a reachable target.</li>
+          <li>Ctrl-click to select an entity, then click a destination to confirm route planning.</li>
+          <li>Place passable structures and confirm entities can traverse through them.</li>
+        </ul>
+      </section>
+
+      <section class="card" data-testid="debug-section-structures">
+        <h2>Structure Placement + Stability</h2>
+        <ul>
+          <li>Enable <code>Place Structure</code>, pick a preset, and place it on the ground.</li>
+          <li>Damage the base with the brush and watch for expected collapse.</li>
+          <li>Toggle <code>Show QuadTree overlay</code> to confirm overlay updates while sim runs.</li>
+        </ul>
+      </section>
+
+      <section class="card" data-testid="debug-section-support">
+        <h2>Support Cells / Passable Solids</h2>
+        <ul>
+          <li>Open the structure editor and paint passable tiles.</li>
+          <li>Verify entities can move through those tiles while they still support structures.</li>
+        </ul>
+      </section>
+
+      <section class="card" data-testid="debug-section-performance">
+        <h2>Performance Sweep</h2>
+        <ul>
+          <li>Spawn multiple entities and monitor the pathfinding update cadence.</li>
+          <li>Use large structures to check frame time stability.</li>
+        </ul>
+      </section>
+
+      <section class="card" data-testid="debug-section-editor">
+        <h2>Structure Editor</h2>
+        <ul>
+          <li>Open the editor and confirm the structure list renders thumbnails.</li>
+          <li>Create a new structure, paint tiles, and export/import data.</li>
+          <li>Confirm saved structures are still available after reload.</li>
+        </ul>
+        <details>
+          <summary>Running the editor directly</summary>
+          <p>
+            Use <code>Open Structure Editor</code> from the main UI. The editor shares the same
+            simulation canvas, so keep the main window open while testing.
+          </p>
+        </details>
+      </section>
+    </main>
+  </body>
+</html>
