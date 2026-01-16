@@ -46,7 +46,7 @@ self.onmessage = function (event: MessageEvent<IncomingMessage>) {
       cpuCells = new Uint32Array(data.cells);
       break;
 
-    case "findPath":
+    case "findPath": {
       if (!pathfinder) return;
       const { requestId, startX, startY, endX, endY } = data;
       const path = pathfinder.findPath(startX, startY, endX, endY);
@@ -55,5 +55,6 @@ self.onmessage = function (event: MessageEvent<IncomingMessage>) {
         data: { requestId, path },
       } satisfies OutgoingMessage);
       break;
+    }
   }
 };

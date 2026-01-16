@@ -11,5 +11,11 @@ module.exports = {
     ecmaVersion: "latest",
     sourceType: "module",
   },
+  globals: {
+    GPUBufferUsage: "readonly",
+    GPUMapMode: "readonly",
+    GPUShaderStage: "readonly",
+    GPUTextureUsage: "readonly",
+  },
   plugins: ["@typescript-eslint"],
 };
