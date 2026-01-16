@@ -1,8 +1,7 @@
+import { DEFAULT_PASSABLE_COLOR, DEFAULT_SOLID_COLOR } from "./utils.js";
+
 const STORAGE_KEY = "ca.structures.v1";
 const STORAGE_VERSION = 1;
-
-const DEFAULT_SOLID_COLOR = "#d0dbe8";
-const DEFAULT_PASSABLE_COLOR = "#5a4a3a";
 
 function createTile({ passable = false, color } = {}) {
   return {

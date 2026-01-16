@@ -141,7 +141,7 @@ Offload pathfinding to worker threads for true parallelism.
 
 ```javascript
 // Main thread
-const pathWorker = new Worker('pathfinding-worker.js');
+const pathWorker = new Worker('/src/pathfinding/worker.js', { type: 'module' });
 const pendingPaths = new Map();
 
 function requestPath(entityId, start, end) {
@@ -157,7 +157,7 @@ pathWorker.onmessage = (e) => {
   pendingPaths.delete(entityId);
 };
 
-// pathfinding-worker.js
+// src/pathfinding/worker.js
 self.onmessage = (e) => {
   const { entityId, start, end, cells } = e.data;
   const path = findPath(start, end, cells);
