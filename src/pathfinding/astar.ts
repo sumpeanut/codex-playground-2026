@@ -71,7 +71,7 @@ export function createPathfinder({
       const length = this.nodes.length;
       const node = this.nodes[i];
       const priority = node.priority;
-      while (true) {
+      for (;;) {
         const left = (i << 1) + 1;
         const right = left + 1;
         let smallest = i;

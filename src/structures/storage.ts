@@ -23,7 +23,7 @@ type StructureBuilder = (tools: {
   groundY: number;
 }) => void;
 
-function createTile({ passable = false, color }: TileOptions = {}): StructureTile {
+export function createTile({ passable = false, color }: TileOptions = {}): StructureTile {
   return {
     solid: true,
     passable,
@@ -31,11 +31,11 @@ function createTile({ passable = false, color }: TileOptions = {}): StructureTil
   };
 }
 
-function createGrid(width: number, height: number): Array<StructureTile | null> {
+export function createGrid(width: number, height: number): Array<StructureTile | null> {
   return Array.from({ length: width * height }, () => null);
 }
 
-function setSolid(
+export function setSolid(
   tiles: Array<StructureTile | null>,
   width: number,
   height: number,
@@ -47,7 +47,11 @@ function setSolid(
   tiles[y * width + x] = createTile(options);
 }
 
-function trimStructureGrid(tiles: Array<StructureTile | null>, width: number, height: number): StructureGrid {
+export function trimStructureGrid(
+  tiles: Array<StructureTile | null>,
+  width: number,
+  height: number
+): StructureGrid {
   let minX = width;
   let minY = height;
   let maxX = -1;
