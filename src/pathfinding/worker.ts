@@ -1,5 +1,5 @@
 import { GRID_H, GRID_W } from "../domain/grid.ts";
-import { createPathfinder, type Pathfinder } from "./core.ts";
+import { createPathfinder, type Pathfinder } from "./astar.ts";
 
 type InitMessage = { type: "init"; data: { gridW: number; gridH: number; cells: ArrayBuffer } };
 
