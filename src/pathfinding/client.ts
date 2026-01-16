@@ -1,14 +1,38 @@
-export function createPathfindingWorkerClient({ gridW, gridH, cpuCells }) {
-  let pathWorker = null;
+type PathRequestResolver = {
+  resolve: (path: Array<{ x: number; y: number }>) => void;
+};
+
+type PathfindingWorkerMessage =
+  | { type: "ready" }
+  | {
+      type: "pathResult";
+      data: { requestId: number; path: Array<{ x: number; y: number }> };
+    };
+
+type PathfindingWorkerPayload =
+  | { type: "init"; data: { gridW: number; gridH: number; cells: ArrayBuffer } }
+  | { type: "updateCells"; data: { cells: ArrayBuffer } }
+  | { type: "findPath"; data: { requestId: number; startX: number; startY: number; endX: number; endY: number } };
+
+export function createPathfindingWorkerClient({
+  gridW,
+  gridH,
+  cpuCells,
+}: {
+  gridW: number;
+  gridH: number;
+  cpuCells: Uint32Array;
+}) {
+  let pathWorker: Worker | null = null;
   let pathRequestId = 0;
-  const pendingPathRequests = new Map();
+  const pendingPathRequests = new Map<number, PathRequestResolver>();
   let workerReady = false;
 
   function init() {
     if (pathWorker) return;
     pathWorker = new Worker(new URL("./worker.js", import.meta.url), { type: "module" });
 
-    pathWorker.onmessage = function (event) {
+    pathWorker.onmessage = function (event: MessageEvent<PathfindingWorkerMessage>) {
       const { type, data } = event.data;
 
       switch (type) {
@@ -38,7 +62,7 @@ export function createPathfindingWorkerClient({ gridW, gridH, cpuCells }) {
           gridH,
           cells: cellsCopy,
         },
-      },
+      } satisfies PathfindingWorkerPayload,
       [cellsCopy]
     );
   }
@@ -50,14 +74,14 @@ export function createPathfindingWorkerClient({ gridW, gridH, cpuCells }) {
         {
           type: "updateCells",
           data: { cells: cellsCopy },
-        },
+        } satisfies PathfindingWorkerPayload,
         [cellsCopy]
       );
     }
   }
 
-  function requestPathAsync(startX, startY, endX, endY) {
-    return new Promise((resolve) => {
+  function requestPathAsync(startX: number, startY: number, endX: number, endY: number) {
+    return new Promise<Array<{ x: number; y: number }>>((resolve) => {
       if (!pathWorker || !workerReady) {
         resolve([]);
         return;
@@ -69,7 +93,7 @@ export function createPathfindingWorkerClient({ gridW, gridH, cpuCells }) {
       pathWorker.postMessage({
         type: "findPath",
         data: { requestId, startX, startY, endX, endY },
-      });
+      } satisfies PathfindingWorkerPayload);
     });
   }
 

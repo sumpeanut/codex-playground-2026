@@ -5,14 +5,66 @@ import {
   createEmptyStructure,
   createStructureId,
   encodeColor565,
+  type Structure,
+  type StructureTile,
 } from "./utils.js";
 import { saveStructures } from "./storage.js";
 
-export function createStructureManager({ ui, structures }) {
+type StructureEditorUI = {
+  structurePreview?: HTMLCanvasElement | null;
+  structureList?: HTMLDivElement | null;
+  structureSelect?: HTMLSelectElement | null;
+  editorCanvas?: HTMLCanvasElement | null;
+  paintMode?: HTMLSelectElement | null;
+  tileType?: HTMLSelectElement | null;
+  tileColor?: HTMLInputElement | null;
+  openEditor?: HTMLButtonElement | null;
+  closeEditor?: HTMLButtonElement | null;
+  editorDialog?: HTMLDialogElement | null;
+  editorNew?: HTMLButtonElement | null;
+  editorRename?: HTMLButtonElement | null;
+  editorDelete?: HTMLButtonElement | null;
+  editorExport?: HTMLButtonElement | null;
+  editorImport?: HTMLButtonElement | null;
+  structureModal?: HTMLDialogElement | null;
+  structureModalTitle?: HTMLHeadingElement | null;
+  structureModalConfirm?: HTMLButtonElement | null;
+  structureData?: HTMLTextAreaElement | null;
+  structureMode?: HTMLInputElement | null;
+};
+
+type EditorState = {
+  currentId: string;
+  paintMode: string;
+  tileType: string;
+  color: string;
+  painting: boolean;
+};
+
+type DrawStructureOptions = {
+  background?: string;
+  border?: string;
+};
+
+type DrawStructureGhostArgs = {
+  overlayCtx: CanvasRenderingContext2D;
+  overlay: HTMLCanvasElement;
+  gridW: number;
+  gridH: number;
+  state: { mx: number; my: number };
+};
+
+export function createStructureManager({
+  ui,
+  structures,
+}: {
+  ui: StructureEditorUI;
+  structures: Structure[];
+}) {
   const structureById = new Map(structures.map((structure) => [structure.id, structure]));
   let selectedStructureId = structures[0]?.id ?? "";
 
-  const editorState = {
+  const editorState: EditorState = {
     currentId: selectedStructureId,
     paintMode: "paint",
     tileType: "solid",
@@ -29,7 +81,11 @@ export function createStructureManager({ ui, structures }) {
     saveStructures(structures);
   }
 
-  function drawStructureToCanvas(structure, canvasEl, options = {}) {
+  function drawStructureToCanvas(
+    structure: Structure | null | undefined,
+    canvasEl: HTMLCanvasElement | null | undefined,
+    options: DrawStructureOptions = {}
+  ) {
     if (!canvasEl) return;
     const ctx = canvasEl.getContext("2d");
     if (!ctx) return;
@@ -56,7 +112,7 @@ export function createStructureManager({ ui, structures }) {
     ctx.strokeRect(offsetX + 0.5, offsetY + 0.5, structure.width * scale - 1, structure.height * scale - 1);
   }
 
-  function drawStructurePreview(structure) {
+  function drawStructurePreview(structure: Structure | null | undefined) {
     drawStructureToCanvas(structure, ui.structurePreview);
   }
 
@@ -127,7 +183,7 @@ export function createStructureManager({ ui, structures }) {
     editorState.color = ui.tileColor?.value ?? DEFAULT_SOLID_COLOR;
   }
 
-  function selectStructure(id, { syncSelect = false } = {}) {
+  function selectStructure(id: string, { syncSelect = false }: { syncSelect?: boolean } = {}) {
     if (!structureById.has(id)) return;
     selectedStructureId = id;
     editorState.currentId = id;
@@ -164,7 +220,7 @@ export function createStructureManager({ ui, structures }) {
     drawStructurePreview(structureById.get(selectedStructureId));
   }
 
-  function getEditorCellFromEvent(event) {
+  function getEditorCellFromEvent(event: PointerEvent) {
     const structure = structureById.get(editorState.currentId);
     if (!structure || !ui.editorCanvas) return null;
     const rect = ui.editorCanvas.getBoundingClientRect();
@@ -176,7 +232,7 @@ export function createStructureManager({ ui, structures }) {
     return { x, y };
   }
 
-  function applyEditorPaint(x, y) {
+  function applyEditorPaint(x: number, y: number) {
     const structure = structureById.get(editorState.currentId);
     if (!structure) return;
     const index = y * structure.width + x;
@@ -189,7 +245,7 @@ export function createStructureManager({ ui, structures }) {
         solid: true,
         passable,
         color: editorState.color || (passable ? DEFAULT_PASSABLE_COLOR : DEFAULT_SOLID_COLOR),
-      };
+      } satisfies StructureTile;
     }
     persistStructures();
     drawEditorCanvas();
@@ -207,7 +263,7 @@ export function createStructureManager({ ui, structures }) {
     ui.editorDialog.close();
   }
 
-  function openStructureModal(mode) {
+  function openStructureModal(mode: "export" | "import") {
     if (!ui.structureModal || !ui.structureData || !ui.structureModalTitle || !ui.structureModalConfirm) return;
     ui.structureModal.dataset.mode = mode;
     if (mode === "export") {
@@ -222,7 +278,7 @@ export function createStructureManager({ ui, structures }) {
     ui.structureModal.showModal();
   }
 
-  function drawStructureGhost({ overlayCtx, overlay, gridW, gridH, state }) {
+  function drawStructureGhost({ overlayCtx, overlay, gridW, gridH, state }: DrawStructureGhostArgs) {
     const structure = structureById.get(selectedStructureId);
     if (!structure || !ui.structureMode?.checked) return;
     const scaleX = overlay.width / gridW;
@@ -250,7 +306,7 @@ export function createStructureManager({ ui, structures }) {
 
   populateStructureSelect();
   ui.structureSelect?.addEventListener("change", (event) => {
-    selectStructure(event.target.value);
+    selectStructure((event.target as HTMLSelectElement).value);
   });
   renderStructureList();
   drawEditorCanvas();
@@ -327,24 +383,24 @@ export function createStructureManager({ ui, structures }) {
   ui.editorImport?.addEventListener("click", () => openStructureModal("import"));
 
   ui.structureModal?.addEventListener("close", () => {
-    if (ui.structureModal.returnValue !== "confirm") return;
+    if (ui.structureModal?.returnValue !== "confirm") return;
     const mode = ui.structureModal.dataset.mode;
     if (mode !== "import") return;
     const raw = ui.structureData?.value ?? "";
-    let parsed;
+    let parsed: unknown;
     try {
       parsed = JSON.parse(raw);
     } catch {
       window.alert("Invalid JSON. Please check the structure data.");
       return;
     }
-    const imported = Array.isArray(parsed) ? parsed : parsed?.structures;
+    const imported = Array.isArray(parsed) ? parsed : (parsed as { structures?: Structure[] }).structures;
     if (!Array.isArray(imported)) {
       window.alert("Expected an array of structures.");
       return;
     }
     const cleaned = imported
-      .filter((item) => item && typeof item === "object")
+      .filter((item): item is Structure => Boolean(item && typeof item === "object"))
       .map((item, index) => {
         const width = Number(item.width) || 0;
         const height = Number(item.height) || 0;
@@ -355,7 +411,7 @@ export function createStructureManager({ ui, structures }) {
           width,
           height,
           tiles: tiles.length === width * height ? tiles : Array.from({ length: width * height }, (_, i) => tiles[i] ?? null),
-        };
+        } satisfies Structure;
       });
     structures.length = 0;
     structures.push(...cleaned);
