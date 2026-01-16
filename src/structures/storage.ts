@@ -1,4 +1,5 @@
-import { DEFAULT_PASSABLE_COLOR, DEFAULT_SOLID_COLOR, type Structure, type StructureTile } from "./utils.ts";
+import { DEFAULT_PASSABLE_COLOR, DEFAULT_SOLID_COLOR } from "../domain/tile.ts";
+import { type Structure, type StructureTile } from "./utils.ts";
 
 const STORAGE_KEY = "ca.structures.v1";
 const STORAGE_VERSION = 1;

@@ -4,7 +4,7 @@ import { createPathfinder } from "../pathfinding/core.ts";
 import { createPathfindingWorkerClient } from "../pathfinding/client.ts";
 import { createStructureManager } from "../structures/editor.ts";
 import { loadStructures } from "../structures/storage.ts";
-import { GRID_H, GRID_W } from "../sim/constants.js";
+import { GRID_H, GRID_W } from "../domain/grid.ts";
 import { createEntitySystem } from "../sim/entities.js";
 import { createSimulationState } from "../sim/state.js";
 import { initRenderer } from "../render/webgpu/renderer.js";

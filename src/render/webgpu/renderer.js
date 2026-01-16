@@ -1,6 +1,6 @@
+import { encodeColor565, encodeTile, getTileDamage, getTileSolid } from "../../domain/tile.ts";
 import { buildQuadTree, drawQuadTree } from "../../sim/quadtree.js";
 import { createDefaultWorld } from "../../sim/world.js";
-import { encodeColor565 } from "../../structures/utils.ts";
 import shaderSource from "./shaders/shaders.wgsl?raw";
 
 export async function initRenderer({
@@ -171,8 +171,8 @@ export async function initRenderer({
     const damage = 0;
     const solid = tile.solid !== false;
     const passable = tile.passable === true;
-    const colorBits = encodeColor565(tile.color) << 10;
-    return (damage & 0xff) | (solid ? (1 << 8) : 0) | (passable ? (1 << 9) : 0) | colorBits;
+    const colorBits = encodeColor565(tile.color);
+    return encodeTile({ damage, solid, passable, colorBits });
   }
 
   function placeStructureAt(gridX, gridY) {
@@ -248,7 +248,7 @@ export async function initRenderer({
       gridW,
       gridH,
       cpuCells,
-      getSolid: (cell) => ((cell >> 8) & 1) === 1 && (cell & 0xff) < 255,
+      getSolid: (cell) => getTileSolid(cell) && getTileDamage(cell) < 255,
     });
     quadState.lastBuiltFrame = state.frame;
   }
