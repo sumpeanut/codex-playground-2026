@@ -247,6 +247,12 @@
       </main>
     </div>
 
+    <!--
+      CA test harness:
+      - window.caTest.run() / window.caTest.getStatus()
+      - postMessage events: ca-test-status, ca-test-result
+      - supports ?autorun=1
+    -->
     <script type="module">
       import {
         loadStructures,
@@ -255,6 +261,40 @@
         getStoredPayloadSize,
         STORAGE_KEY,
       } from "/src/structures/storage.js";
+
+      const caTestState = {
+        name: "structure-editor",
+        status: "idle",
+        passed: null,
+        details: null,
+      };
+
+      function postCaStatus(status, details = null) {
+        caTestState.status = status;
+        caTestState.details = details;
+        if (window.parent) {
+          window.parent.postMessage({
+            type: "ca-test-status",
+            name: caTestState.name,
+            status,
+            details,
+          }, "*");
+        }
+      }
+
+      function postCaResult(passed, details = null) {
+        caTestState.status = passed ? "pass" : "fail";
+        caTestState.passed = passed;
+        caTestState.details = details;
+        if (window.parent) {
+          window.parent.postMessage({
+            type: "ca-test-result",
+            name: caTestState.name,
+            passed,
+            details,
+          }, "*");
+        }
+      }
 
       const DEFAULT_SOLID_COLOR = "#d0dbe8";
       const DEFAULT_PASSABLE_COLOR = "#5a4a3a";
@@ -810,6 +850,26 @@
         updateSimStatus(totalMoves, totalMoves);
         drawSimulation();
       });
+
+      async function runCaSuite() {
+        if (caTestState.status === "running") return;
+        postCaStatus("running");
+        const details = {
+          manualOnly: true,
+          reason: "Editor persistence requires manual validation.",
+        };
+        postCaResult(false, details);
+      }
+
+      window.caTest = {
+        run: runCaSuite,
+        getStatus: () => ({ ...caTestState }),
+      };
+
+      const autorun = new URLSearchParams(window.location.search).get("autorun") === "1";
+      if (autorun) {
+        runCaSuite();
+      }
 
       rebuildStructureMap();
       renderStructureList();
