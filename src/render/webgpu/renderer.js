@@ -1,6 +1,7 @@
 import { buildQuadTree, drawQuadTree } from "../../sim/quadtree.js";
 import { createDefaultWorld } from "../../sim/world.js";
 import { encodeColor565 } from "../../structures/utils.js";
+import shaderSource from "./shaders/shaders.wgsl?raw";
 
 export async function initRenderer({
   canvas,
@@ -36,8 +37,7 @@ export async function initRenderer({
   const presentationFormat = navigator.gpu.getPreferredCanvasFormat();
   context.configure({ device, format: presentationFormat, alphaMode: "opaque" });
 
-  const wgsl = await (await fetch("/public/shaders.wgsl")).text();
-  const shader = device.createShaderModule({ code: wgsl });
+  const shader = device.createShaderModule({ code: shaderSource });
 
   const cellCount = gridW * gridH;
   const cellsBytes = cellCount * 4;
