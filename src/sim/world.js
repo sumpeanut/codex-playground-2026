@@ -1,16 +1,17 @@
+import { encodeTile, getTileSolid } from "../domain/tile.ts";
+
 export function createDefaultWorld({ gridW, gridH }) {
   const cellCount = gridW * gridH;
   const cells = new Uint32Array(cellCount);
 
   function setSolid(x, y, dmg = 0, passable = false) {
     if (x < 0 || x >= gridW || y < 0 || y >= gridH) return;
-    const p = passable ? (1 << 9) : 0;
-    cells[y * gridW + x] = (dmg & 0xff) | (1 << 8) | p;
+    cells[y * gridW + x] = encodeTile({ damage: dmg, solid: true, passable });
   }
 
   function getSolid(x, y) {
     if (x < 0 || x >= gridW || y < 0 || y >= gridH) return false;
-    return (cells[y * gridW + x] & (1 << 8)) !== 0;
+    return getTileSolid(cells[y * gridW + x]);
   }
 
   const groundY = gridH - 10;

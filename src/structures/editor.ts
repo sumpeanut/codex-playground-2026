@@ -1,13 +1,5 @@
-import {
-  DEFAULT_EDITOR_SIZE,
-  DEFAULT_PASSABLE_COLOR,
-  DEFAULT_SOLID_COLOR,
-  createEmptyStructure,
-  createStructureId,
-  encodeColor565,
-  type Structure,
-  type StructureTile,
-} from "./utils.ts";
+import { DEFAULT_PASSABLE_COLOR, DEFAULT_SOLID_COLOR, encodeColor565 } from "../domain/tile.ts";
+import { DEFAULT_EDITOR_SIZE, createEmptyStructure, createStructureId, type Structure, type StructureTile } from "./utils.ts";
 import { saveStructures } from "./storage.ts";
 
 type StructureEditorUI = {

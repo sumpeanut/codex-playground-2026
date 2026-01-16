@@ -1,3 +1,5 @@
+import { getTileDamage, getTilePassable, getTileSolid } from "../domain/tile.ts";
+
 export type Pathfinder = {
   findPath: (startX: number, startY: number, endX: number, endY: number) => Array<{ x: number; y: number }>;
   isWalkable: (x: number, y: number) => boolean;
@@ -90,13 +92,11 @@ export function createPathfinder({
   }
 
   function getSolid(cell: number) {
-    const dmg = cell & 0xff;
-    const solidBit = (cell >> 8) & 1;
-    return solidBit === 1 && dmg < 255;
+    return getTileSolid(cell) && getTileDamage(cell) < 255;
   }
 
   function getPassable(cell: number) {
-    return ((cell >> 9) & 1) === 1;
+    return getTilePassable(cell);
   }
 
   function blocksEntity(cell: number) {

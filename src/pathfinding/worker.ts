@@ -1,3 +1,4 @@
+import { GRID_H, GRID_W } from "../domain/grid.ts";
 import { createPathfinder, type Pathfinder } from "./core.ts";
 
 type InitMessage = { type: "init"; data: { gridW: number; gridH: number; cells: ArrayBuffer } };
@@ -20,8 +21,8 @@ type PathResultMessage = {
 
 type OutgoingMessage = ReadyMessage | PathResultMessage;
 
-let GRID_W = 256;
-let GRID_H = 144;
+let gridW = GRID_W;
+let gridH = GRID_H;
 let cpuCells: Uint32Array | null = null;
 let pathfinder: Pathfinder | null = null;
 
@@ -30,13 +31,13 @@ self.onmessage = function (event: MessageEvent<IncomingMessage>) {
 
   switch (type) {
     case "init":
-      GRID_W = data.gridW;
-      GRID_H = data.gridH;
+      gridW = data.gridW;
+      gridH = data.gridH;
       cpuCells = new Uint32Array(data.cells);
       pathfinder = createPathfinder({
-        gridW: GRID_W,
-        gridH: GRID_H,
-        getCell: (x, y) => cpuCells?.[y * GRID_W + x] ?? 0,
+        gridW,
+        gridH,
+        getCell: (x, y) => cpuCells?.[y * gridW + x] ?? 0,
       });
       self.postMessage({ type: "ready" } satisfies OutgoingMessage);
       break;
