@@ -31,6 +31,16 @@ async function bootstrap() {
 
   const structureManager = createStructureManager({ ui, structures });
 
+  if (ui.pathCacheEnabled) {
+    ui.pathCacheEnabled.checked = true;
+    ui.pathCacheEnabled.addEventListener("change", (event) => {
+      const target = event.target;
+      if (target instanceof HTMLInputElement) {
+        pathWorkerClient.setCacheEnabled(target.checked);
+      }
+    });
+  }
+
   const entitySystem = createEntitySystem({
     gridW: GRID_W,
     gridH: GRID_H,

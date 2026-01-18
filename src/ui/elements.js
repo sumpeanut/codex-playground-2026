@@ -32,5 +32,7 @@ export function getUiElements() {
     showQuadTree: document.getElementById("showQuadTree"),
     spawnEntity: document.getElementById("spawnEntity"),
     entityCount: document.getElementById("entityCount"),
+    pathCacheEnabled: document.getElementById("pathCacheEnabled"),
+    pathMetrics: document.getElementById("pathMetrics"),
   };
 }

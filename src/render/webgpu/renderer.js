@@ -19,6 +19,11 @@ export async function initRenderer({
   if (!overlayCtx) throw new Error("Overlay context not available");
 
   const dpr = window.devicePixelRatio || 1;
+  function formatBytes(bytes) {
+    if (bytes < 1024) return `${Math.round(bytes)} B`;
+    if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+    return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
+  }
   function resizeCanvas() {
     const rect = canvas.getBoundingClientRect();
     canvas.width = Math.max(1, Math.floor(rect.width * dpr));
@@ -296,6 +301,11 @@ export async function initRenderer({
     state.frame++;
     if ((ui.showQuadTree.checked || entitySystem.entities.length > 0) && state.frame - quadState.lastBuiltFrame > 10) {
       requestGpuReadback();
+    }
+    if (ui.pathMetrics && state.frame % 10 === 0) {
+      const metrics = pathWorkerClient.getMetrics();
+      const hitRate = (metrics.hitRate * 100).toFixed(1);
+      ui.pathMetrics.textContent = `Cache ${metrics.cacheEnabled ? "on" : "off"} · Hits ${metrics.cacheHits} / Misses ${metrics.cacheMisses} (${hitRate}%) · Entries ${metrics.cacheEntries} (${formatBytes(metrics.cacheBytes)}) · Throughput ${metrics.totalThroughput.toFixed(1)} paths/s (worker ${metrics.workerThroughput.toFixed(1)} paths/s) · Batches ${metrics.batchCount}`;
     }
     writeParams();
 
