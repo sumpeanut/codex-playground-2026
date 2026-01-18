@@ -270,6 +270,15 @@
           <option value="worker">Web Worker (async)</option>
         </select>
       </div>
+
+      <div class="control-group">
+        <label>Algorithm</label>
+        <select id="algorithm">
+          <option value="astar">A* (per-path)</option>
+          <option value="flow">Flow Field (Dijkstra + vectors)</option>
+          <option value="compare">Compare A* vs Flow</option>
+        </select>
+      </div>
       
       <div class="control-group" style="justify-content: flex-end;">
         <button id="startTest">▶ Start Test</button>
@@ -474,6 +483,14 @@
     
     function useWorkerMode() {
       return document.getElementById('pathfindingMode').value === 'worker';
+    }
+
+    function getAlgorithmSelection() {
+      return document.getElementById('algorithm').value;
+    }
+
+    function getAlgorithmLabel(algorithm) {
+      return algorithm === 'flow' ? 'Flow Field' : 'A*';
     }
     
     // ---- Logging ----
@@ -944,6 +961,182 @@
       const t1 = performance.now();
       return { path, time: t1 - t0, length: path.length };
     }
+
+    // ---- Flow Field (Dijkstra) ----
+    class MinHeap {
+      constructor() {
+        this.nodes = [];
+      }
+      get size() {
+        return this.nodes.length;
+      }
+      push(node) {
+        this.nodes.push(node);
+        this.bubbleUp(this.nodes.length - 1);
+      }
+      pop() {
+        if (this.nodes.length === 0) return null;
+        const min = this.nodes[0];
+        const last = this.nodes.pop();
+        if (this.nodes.length > 0 && last) {
+          this.nodes[0] = last;
+          this.sinkDown(0);
+        }
+        return min;
+      }
+      bubbleUp(index) {
+        const node = this.nodes[index];
+        while (index > 0) {
+          const parentIndex = (index - 1) >> 1;
+          const parent = this.nodes[parentIndex];
+          if (node.cost >= parent.cost) break;
+          this.nodes[index] = parent;
+          index = parentIndex;
+        }
+        this.nodes[index] = node;
+      }
+      sinkDown(index) {
+        const length = this.nodes.length;
+        const node = this.nodes[index];
+        for (;;) {
+          const left = (index << 1) + 1;
+          const right = left + 1;
+          let smallest = index;
+          if (left < length && this.nodes[left].cost < this.nodes[smallest].cost) {
+            smallest = left;
+          }
+          if (right < length && this.nodes[right].cost < this.nodes[smallest].cost) {
+            smallest = right;
+          }
+          if (smallest === index) break;
+          this.nodes[index] = this.nodes[smallest];
+          index = smallest;
+        }
+        this.nodes[index] = node;
+      }
+    }
+
+    const flowNeighbors = [
+      [-1, 0, 1],
+      [1, 0, 1],
+      [0, -1, 1],
+      [0, 1, 1],
+      [-1, -1, Math.SQRT2],
+      [1, -1, Math.SQRT2],
+      [-1, 1, Math.SQRT2],
+      [1, 1, Math.SQRT2],
+    ];
+
+    function buildFlowField(goalX, goalY) {
+      const costs = new Float32Array(GRID_W * GRID_H);
+      costs.fill(Number.POSITIVE_INFINITY);
+      const vectors = new Int8Array(GRID_W * GRID_H * 2);
+
+      goalX = Math.max(0, Math.min(GRID_W - 1, goalX));
+      goalY = Math.max(0, Math.min(GRID_H - 1, goalY));
+      let resolvedGoal = { x: goalX, y: goalY };
+      if (!isWalkable(goalX, goalY)) {
+        const nearest = findNearestWalkable(goalX, goalY);
+        if (nearest) resolvedGoal = nearest;
+      }
+
+      if (!isWalkable(resolvedGoal.x, resolvedGoal.y)) {
+        return { costs, vectors, goal: null };
+      }
+
+      const heap = new MinHeap();
+      const goalIndex = resolvedGoal.y * GRID_W + resolvedGoal.x;
+      costs[goalIndex] = 0;
+      heap.push({ key: goalIndex, cost: 0 });
+
+      while (heap.size > 0) {
+        const current = heap.pop();
+        if (!current) break;
+        if (current.cost > costs[current.key]) continue;
+
+        const cx = current.key % GRID_W;
+        const cy = Math.floor(current.key / GRID_W);
+
+        for (const [dx, dy, stepCost] of flowNeighbors) {
+          const nx = cx + dx;
+          const ny = cy + dy;
+          if (nx < 0 || nx >= GRID_W || ny < 0 || ny >= GRID_H) continue;
+          if (!isWalkable(nx, ny)) continue;
+          const nk = ny * GRID_W + nx;
+          const nextCost = current.cost + stepCost;
+          if (nextCost < costs[nk]) {
+            costs[nk] = nextCost;
+            heap.push({ key: nk, cost: nextCost });
+          }
+        }
+      }
+
+      for (let y = 0; y < GRID_H; y++) {
+        for (let x = 0; x < GRID_W; x++) {
+          const key = y * GRID_W + x;
+          if (!Number.isFinite(costs[key]) || !isWalkable(x, y)) {
+            vectors[key * 2] = 0;
+            vectors[key * 2 + 1] = 0;
+            continue;
+          }
+          let bestCost = costs[key];
+          let bestDx = 0;
+          let bestDy = 0;
+          for (const [dx, dy] of flowNeighbors) {
+            const nx = x + dx;
+            const ny = y + dy;
+            if (nx < 0 || nx >= GRID_W || ny < 0 || ny >= GRID_H) continue;
+            if (!isWalkable(nx, ny)) continue;
+            const nk = ny * GRID_W + nx;
+            const neighborCost = costs[nk];
+            if (neighborCost < bestCost) {
+              bestCost = neighborCost;
+              bestDx = dx;
+              bestDy = dy;
+            }
+          }
+          vectors[key * 2] = bestDx;
+          vectors[key * 2 + 1] = bestDy;
+        }
+      }
+
+      return { costs, vectors, goal: resolvedGoal };
+    }
+
+    function traceFlowPath(startX, startY, flow) {
+      const start = findNearestWalkable(startX, startY);
+      if (!start || !flow.goal) return 0;
+      let cx = start.x;
+      let cy = start.y;
+      let steps = 0;
+      const maxSteps = GRID_W * GRID_H;
+
+      while (steps < maxSteps) {
+        if (cx === flow.goal.x && cy === flow.goal.y) {
+          break;
+        }
+        const key = cy * GRID_W + cx;
+        const dx = flow.vectors[key * 2];
+        const dy = flow.vectors[key * 2 + 1];
+        if (dx === 0 && dy === 0) break;
+        cx += dx;
+        cy += dy;
+        steps++;
+      }
+
+      return steps;
+    }
+
+    function timedComputePath(algorithm, startX, startY, endX, endY) {
+      if (algorithm === 'flow') {
+        const t0 = performance.now();
+        const flow = buildFlowField(endX, endY);
+        const steps = traceFlowPath(startX, startY, flow);
+        const t1 = performance.now();
+        return { path: new Array(steps), time: t1 - t0, length: steps };
+      }
+      return timedFindPath(startX, startY, endX, endY);
+    }
     
     // ---- Entity Class ----
     class Entity {
@@ -1136,11 +1329,11 @@
     }
     
     // ---- Test Modes ----
-    async function runSinglePathBenchmark() {
+    async function runSinglePathBenchmark(algorithm) {
       const complexity = document.getElementById('mapComplexity').value;
       generateMap(complexity);
       
-      log(`Starting single path benchmark with ${complexity} map...`);
+      log(`Starting single path benchmark (${getAlgorithmLabel(algorithm)}) with ${complexity} map...`);
       
       stats.pathTimes = [];
       stats.pathsComputed = 0;
@@ -1152,7 +1345,7 @@
         const start = getRandomWalkablePosition();
         const end = getRandomWalkablePosition();
         
-        const result = timedFindPath(start.x, start.y, end.x, end.y);
+        const result = timedComputePath(algorithm, start.x, start.y, end.x, end.y);
         stats.pathTimes.push(result.time);
         stats.pathsComputed++;
         
@@ -1176,15 +1369,15 @@
       log(`  Average: ${avg.toFixed(3)}ms, Min: ${min.toFixed(3)}ms, Max: ${max.toFixed(3)}ms`);
       log(`  Safe paths per frame: ${safePerFrame} (at ${PATHFINDING_BUDGET_MS}ms budget)`);
       
-      addResult('Single Path', '-', stats.pathsComputed, avg, min, max, safePerFrame);
+      addResult(`Single Path (${getAlgorithmLabel(algorithm)})`, '-', stats.pathsComputed, avg, min, max, safePerFrame);
     }
     
-    async function runBatchTest() {
+    async function runBatchTest(algorithm) {
       const complexity = document.getElementById('mapComplexity').value;
       const pathsPerFrame = parseInt(document.getElementById('pathsPerFrame').value);
       generateMap(complexity);
       
-      log(`Starting batch test: ${pathsPerFrame} paths per frame, ${complexity} map...`);
+      log(`Starting batch test (${getAlgorithmLabel(algorithm)}): ${pathsPerFrame} paths per frame, ${complexity} map...`);
       
       stats.pathTimes = [];
       stats.frameTimes = [];
@@ -1201,7 +1394,7 @@
           const start = getRandomWalkablePosition();
           const end = getRandomWalkablePosition();
           
-          const result = timedFindPath(start.x, start.y, end.x, end.y);
+          const result = timedComputePath(algorithm, start.x, start.y, end.x, end.y);
           stats.pathTimes.push(result.time);
           stats.pathsComputed++;
         }
@@ -1229,15 +1422,15 @@
       log(`  Avg path: ${avgPath.toFixed(3)}ms, Avg frame: ${avgFrame.toFixed(3)}ms`);
       
       const status = avgFrame < PATHFINDING_BUDGET_MS ? 'ok' : (avgFrame < FRAME_BUDGET_MS ? 'tight' : 'exceeded');
-      addResult(`Batch (${pathsPerFrame}/frame)`, '-', stats.pathsComputed, avgPath, min, max, 
+      addResult(`Batch (${pathsPerFrame}/frame, ${getAlgorithmLabel(algorithm)})`, '-', stats.pathsComputed, avgPath, min, max, 
         Math.floor(PATHFINDING_BUDGET_MS / avgPath), status);
     }
     
-    async function runStressTest() {
+    async function runStressTest(algorithm) {
       const complexity = document.getElementById('mapComplexity').value;
       generateMap(complexity);
       
-      log(`Starting stress test to find pathfinding limit...`);
+      log(`Starting stress test (${getAlgorithmLabel(algorithm)}) to find pathfinding limit...`);
       
       stats.pathTimes = [];
       stats.frameTimes = [];
@@ -1260,7 +1453,7 @@
             const start = getRandomWalkablePosition();
             const end = getRandomWalkablePosition();
             
-            const result = timedFindPath(start.x, start.y, end.x, end.y);
+            const result = timedComputePath(algorithm, start.x, start.y, end.x, end.y);
             stats.pathTimes.push(result.time);
             stats.pathsComputed++;
           }
@@ -1300,15 +1493,15 @@
       log(`  Hard limit: ~${pathsPerFrame} paths/frame (exceeds ${FRAME_BUDGET_MS}ms frame budget)`);
       log(`  Avg path time: ${avgPath.toFixed(3)}ms`);
       
-      addResult(`Stress Test (${complexity})`, '-', stats.pathsComputed, avgPath, 
+      addResult(`Stress Test (${complexity}, ${getAlgorithmLabel(algorithm)})`, '-', stats.pathsComputed, avgPath, 
         Math.min(...stats.pathTimes), Math.max(...stats.pathTimes), safeLimit, 'complete');
     }
     
-    async function runRealtimeSimulation() {
+    async function runRealtimeSimulation(algorithm) {
       const complexity = document.getElementById('mapComplexity').value;
       const entityCount = parseInt(document.getElementById('entityCount').value);
       const pathsPerFrame = parseInt(document.getElementById('pathsPerFrame').value);
-      const useWorker = useWorkerMode();
+      const useWorker = useWorkerMode() && algorithm !== 'flow';
       
       generateMap(complexity);
       
@@ -1329,7 +1522,8 @@
       }
       
       const modeLabel = useWorker ? '(Web Worker)' : '(Sync - blocks main thread)';
-      log(`Starting realtime simulation ${modeLabel}: ${entityCount} entities, ${pathsPerFrame} paths/frame...`);
+      const algorithmLabel = getAlgorithmLabel(algorithm);
+      log(`Starting realtime simulation ${algorithmLabel} ${modeLabel}: ${entityCount} entities, ${pathsPerFrame} paths/frame...`);
       
       // Create entities at random walkable positions
       entities = [];
@@ -1344,6 +1538,18 @@
       stats.frameTimeHistory = [];
       stats.pathsComputed = 0;
       totalBlockedTime = 0;
+      let flow = null;
+      let flowGoal = null;
+
+      if (algorithm === 'flow') {
+        flowGoal = getRandomWalkablePosition();
+        const buildStart = performance.now();
+        flow = buildFlowField(flowGoal.x, flowGoal.y);
+        const buildTime = performance.now() - buildStart;
+        stats.pathTimes.push(buildTime);
+        stats.pathsComputed = 1;
+        log(`Flow field built for shared goal (${flowGoal.x}, ${flowGoal.y}) in ${buildTime.toFixed(3)}ms.`);
+      }
       
       let lastTime = performance.now();
       let frame = 0;
@@ -1357,15 +1563,33 @@
         lastTime = frameStart;
         
         // Update entities
-        for (const ent of entities) {
-          ent.update();
+        if (algorithm === 'flow' && flow) {
+          const lookupStart = performance.now();
+          for (const ent of entities) {
+            const cx = Math.floor(ent.x);
+            const cy = Math.floor(ent.y);
+            if (cx < 0 || cx >= GRID_W || cy < 0 || cy >= GRID_H) continue;
+            const key = cy * GRID_W + cx;
+            const dx = flow.vectors[key * 2];
+            const dy = flow.vectors[key * 2 + 1];
+            if (dx === 0 && dy === 0) continue;
+            ent.x = Math.max(0, Math.min(GRID_W - 1, ent.x + dx * 0.15));
+            ent.y = Math.max(0, Math.min(GRID_H - 1, ent.y + dy * 0.15));
+          }
+          const lookupTime = performance.now() - lookupStart;
+          stats.pathTimes.push(lookupTime / Math.max(1, entities.length));
+          stats.pathsComputed += entities.length;
+        } else {
+          for (const ent of entities) {
+            ent.update();
+          }
         }
         
         // Compute paths for entities that need them (limited per frame)
         let pathsThisFrame = 0;
         for (const ent of entities) {
           if (pathsThisFrame >= pathsPerFrame) break;
-          if (!ent.needsPath || ent.pathPending) continue;
+          if (algorithm === 'flow' || !ent.needsPath || ent.pathPending) continue;
           
           // Random destination from anywhere walkable on the map
           const dest = getRandomWalkablePosition();
@@ -1458,27 +1682,41 @@
       document.getElementById('stopTest').disabled = false;
       document.getElementById('progressFill').style.width = '0%';
       
-      stats.pathTimes = [];
-      stats.frameTimes = [];
-      stats.frameTimeHistory = [];
-      stats.pathsComputed = 0;
-      
       const mode = document.getElementById('testMode').value;
+      const algorithmSelection = getAlgorithmSelection();
+      const algorithms = algorithmSelection === 'compare' ? ['astar', 'flow'] : [algorithmSelection];
+
+      const resetStatsForRun = () => {
+        stats.pathTimes = [];
+        stats.frameTimes = [];
+        stats.frameTimeHistory = [];
+        stats.pathsComputed = 0;
+        totalBlockedTime = 0;
+      };
       
       try {
-        switch (mode) {
-          case 'single':
-            await runSinglePathBenchmark();
-            break;
-          case 'batch':
-            await runBatchTest();
-            break;
-          case 'stress':
-            await runStressTest();
-            break;
-          case 'realtime':
-            await runRealtimeSimulation();
-            return; // Don't stop - runs until user stops
+        for (const algorithm of algorithms) {
+          if (mode === 'realtime' && algorithmSelection === 'compare') {
+            log('Compare mode is not supported for realtime simulation; running A* only.');
+          }
+          resetStatsForRun();
+          switch (mode) {
+            case 'single':
+              await runSinglePathBenchmark(algorithm);
+              break;
+            case 'batch':
+              await runBatchTest(algorithm);
+              break;
+            case 'stress':
+              await runStressTest(algorithm);
+              break;
+            case 'realtime': {
+              const selected = algorithmSelection === 'compare' ? 'astar' : algorithm;
+              await runRealtimeSimulation(selected);
+              return; // Don't stop - runs until user stops
+            }
+          }
+          if (!running) break;
         }
       } catch (e) {
         log(`Error: ${e.message}`);
