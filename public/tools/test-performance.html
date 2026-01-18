@@ -264,10 +264,19 @@
       </div>
       
       <div class="control-group">
-        <label>Pathfinding Mode</label>
+        <label>Execution Mode</label>
         <select id="pathfindingMode">
           <option value="sync">Synchronous (blocks main thread)</option>
           <option value="worker">Web Worker (async)</option>
+        </select>
+      </div>
+
+      <div class="control-group">
+        <label>Algorithm</label>
+        <select id="pathfindingAlgorithm">
+          <option value="astar">A* (baseline)</option>
+          <option value="hpa">HPA* (chunked)</option>
+          <option value="compare">Compare (A* vs HPA*)</option>
         </select>
       </div>
       
@@ -359,6 +368,7 @@
     // ---- Constants ----
     const GRID_W = 256;
     const GRID_H = 144;
+    const LONG_DISTANCE_THRESHOLD = GRID_W * 0.5;
     const TARGET_FPS = 60;
     const FRAME_BUDGET_MS = 1000 / TARGET_FPS; // 16.67ms
     const PATHFINDING_BUDGET_MS = 8; // Assuming half the frame for other work
@@ -398,6 +408,7 @@
       frameTimes: [],
       frameTimeHistory: [],
       pathCostDistribution: [],
+      algorithmSamples: [],
       startTime: 0,
     };
     
@@ -424,10 +435,10 @@
             break;
             
           case 'pathResult':
-            const { requestId, path } = data;
+            const { requestId, path, stats } = data;
             const pending = pendingPathRequests.get(requestId);
             if (pending) {
-              pending.resolve({ path, time: performance.now() - pending.startTime });
+              pending.resolve({ path, time: performance.now() - pending.startTime, stats });
               pendingPathRequests.delete(requestId);
             }
             break;
@@ -454,7 +465,7 @@
       }
     }
     
-    function requestPathAsync(startX, startY, endX, endY) {
+    function requestPathAsync(startX, startY, endX, endY, mode) {
       return new Promise((resolve) => {
         if (!pathWorker || !workerReady) {
           resolve({ path: [], time: 0 });
@@ -467,13 +478,21 @@
         
         pathWorker.postMessage({
           type: 'findPath',
-          data: { requestId, startX, startY, endX, endY }
+          data: { requestId, startX, startY, endX, endY, mode }
         });
       });
     }
     
+    function getExecutionMode() {
+      return document.getElementById('pathfindingMode').value;
+    }
+
+    function getAlgorithmMode() {
+      return document.getElementById('pathfindingAlgorithm').value;
+    }
+
     function useWorkerMode() {
-      return document.getElementById('pathfindingMode').value === 'worker';
+      return getExecutionMode() === 'worker' || getAlgorithmMode() !== 'astar';
     }
     
     // ---- Logging ----
@@ -488,6 +507,51 @@
     function clearLog() {
       logText = '';
       logEl.textContent = '';
+    }
+
+    function recordAlgorithmStats(result, start, end) {
+      if (!result || !result.stats) return;
+      const distance = Math.hypot(end.x - start.x, end.y - start.y);
+      stats.algorithmSamples.push({
+        distance,
+        ...result.stats,
+      });
+    }
+
+    function summarizeAlgorithmStats(label) {
+      if (stats.algorithmSamples.length === 0) return;
+      const mode = getAlgorithmMode();
+      const summaryLabel = label ? `${label} ` : '';
+
+      const relevant = stats.algorithmSamples.filter(sample => sample.mode === mode);
+      if (relevant.length === 0) return;
+
+      const summarizeSet = (samples, qualifier) => {
+        if (samples.length === 0) return;
+        if (mode === 'compare') {
+          const avgAstar = samples.reduce((sum, s) => sum + (s.astarMs || 0), 0) / samples.length;
+          const avgHpa = samples.reduce((sum, s) => sum + (s.hpaMs || 0), 0) / samples.length;
+          const delta = avgAstar - avgHpa;
+          log(`${summaryLabel}Compare${qualifier}: A* ${avgAstar.toFixed(3)}ms vs HPA* ${avgHpa.toFixed(3)}ms (Δ ${delta.toFixed(3)}ms)`);
+          const avgAbstract = samples.reduce((sum, s) => sum + (s.abstractExpanded || 0), 0) / samples.length;
+          const avgLocal = samples.reduce((sum, s) => sum + (s.localExpanded || 0), 0) / samples.length;
+          log(`${summaryLabel}  HPA* expanded: abstract ${avgAbstract.toFixed(1)}, local ${avgLocal.toFixed(1)}`);
+        } else if (mode === 'hpa') {
+          const avgHpa = samples.reduce((sum, s) => sum + (s.hpaMs || 0), 0) / samples.length;
+          const avgAbstract = samples.reduce((sum, s) => sum + (s.abstractExpanded || 0), 0) / samples.length;
+          const avgLocal = samples.reduce((sum, s) => sum + (s.localExpanded || 0), 0) / samples.length;
+          log(`${summaryLabel}HPA*${qualifier}: ${avgHpa.toFixed(3)}ms (abstract ${avgAbstract.toFixed(1)}, local ${avgLocal.toFixed(1)})`);
+        } else {
+          const avgAstar = samples.reduce((sum, s) => sum + (s.astarMs || 0), 0) / samples.length;
+          log(`${summaryLabel}A*${qualifier}: ${avgAstar.toFixed(3)}ms`);
+        }
+      };
+
+      summarizeSet(relevant, '');
+      const longDistance = relevant.filter(sample => sample.distance >= LONG_DISTANCE_THRESHOLD);
+      if (longDistance.length > 0) {
+        summarizeSet(longDistance, ' (long-distance)');
+      }
     }
     
     // ---- Cell Helpers ----
@@ -942,7 +1006,7 @@
       const t0 = performance.now();
       const path = findPath(startX, startY, endX, endY);
       const t1 = performance.now();
-      return { path, time: t1 - t0, length: path.length };
+      return { path, time: t1 - t0, length: path.length, stats: { mode: 'astar', astarMs: t1 - t0 } };
     }
     
     // ---- Entity Class ----
@@ -1136,13 +1200,31 @@
     }
     
     // ---- Test Modes ----
+    async function ensureWorkerReady() {
+      if (!useWorkerMode()) return;
+      if (!pathWorker) {
+        initPathWorker();
+      }
+      await new Promise(resolve => {
+        const check = () => {
+          if (workerReady) resolve();
+          else setTimeout(check, 50);
+        };
+        check();
+      });
+      updateWorkerCells();
+    }
+
     async function runSinglePathBenchmark() {
       const complexity = document.getElementById('mapComplexity').value;
+      const algorithmMode = getAlgorithmMode();
       generateMap(complexity);
       
-      log(`Starting single path benchmark with ${complexity} map...`);
+      await ensureWorkerReady();
+      log(`Starting single path benchmark with ${complexity} map (${algorithmMode})...`);
       
       stats.pathTimes = [];
+      stats.algorithmSamples = [];
       stats.pathsComputed = 0;
       
       const iterations = 100;
@@ -1151,10 +1233,13 @@
         // Random start and end points from anywhere walkable on the map
         const start = getRandomWalkablePosition();
         const end = getRandomWalkablePosition();
-        
-        const result = timedFindPath(start.x, start.y, end.x, end.y);
+
+        const result = useWorkerMode()
+          ? await requestPathAsync(start.x, start.y, end.x, end.y, algorithmMode)
+          : timedFindPath(start.x, start.y, end.x, end.y);
         stats.pathTimes.push(result.time);
         stats.pathsComputed++;
+        recordAlgorithmStats(result, start, end);
         
         document.getElementById('progressFill').style.width = `${((i + 1) / iterations) * 100}%`;
         
@@ -1175,6 +1260,7 @@
       log(`Benchmark complete: ${stats.pathsComputed} paths`);
       log(`  Average: ${avg.toFixed(3)}ms, Min: ${min.toFixed(3)}ms, Max: ${max.toFixed(3)}ms`);
       log(`  Safe paths per frame: ${safePerFrame} (at ${PATHFINDING_BUDGET_MS}ms budget)`);
+      summarizeAlgorithmStats('Single Path');
       
       addResult('Single Path', '-', stats.pathsComputed, avg, min, max, safePerFrame);
     }
@@ -1182,13 +1268,16 @@
     async function runBatchTest() {
       const complexity = document.getElementById('mapComplexity').value;
       const pathsPerFrame = parseInt(document.getElementById('pathsPerFrame').value);
+      const algorithmMode = getAlgorithmMode();
       generateMap(complexity);
       
-      log(`Starting batch test: ${pathsPerFrame} paths per frame, ${complexity} map...`);
+      await ensureWorkerReady();
+      log(`Starting batch test: ${pathsPerFrame} paths per frame, ${complexity} map (${algorithmMode})...`);
       
       stats.pathTimes = [];
       stats.frameTimes = [];
       stats.frameTimeHistory = [];
+      stats.algorithmSamples = [];
       stats.pathsComputed = 0;
       
       const frames = 120; // 2 seconds at 60fps
@@ -1200,10 +1289,13 @@
           // Random start and end points from anywhere walkable
           const start = getRandomWalkablePosition();
           const end = getRandomWalkablePosition();
-          
-          const result = timedFindPath(start.x, start.y, end.x, end.y);
+
+          const result = useWorkerMode()
+            ? await requestPathAsync(start.x, start.y, end.x, end.y, algorithmMode)
+            : timedFindPath(start.x, start.y, end.x, end.y);
           stats.pathTimes.push(result.time);
           stats.pathsComputed++;
+          recordAlgorithmStats(result, start, end);
         }
         
         const frameTime = performance.now() - frameStart;
@@ -1227,6 +1319,7 @@
       
       log(`Batch test complete: ${stats.pathsComputed} paths over ${frames} frames`);
       log(`  Avg path: ${avgPath.toFixed(3)}ms, Avg frame: ${avgFrame.toFixed(3)}ms`);
+      summarizeAlgorithmStats('Batch');
       
       const status = avgFrame < PATHFINDING_BUDGET_MS ? 'ok' : (avgFrame < FRAME_BUDGET_MS ? 'tight' : 'exceeded');
       addResult(`Batch (${pathsPerFrame}/frame)`, '-', stats.pathsComputed, avgPath, min, max, 
@@ -1235,13 +1328,16 @@
     
     async function runStressTest() {
       const complexity = document.getElementById('mapComplexity').value;
+      const algorithmMode = getAlgorithmMode();
       generateMap(complexity);
       
-      log(`Starting stress test to find pathfinding limit...`);
+      await ensureWorkerReady();
+      log(`Starting stress test to find pathfinding limit (${algorithmMode})...`);
       
       stats.pathTimes = [];
       stats.frameTimes = [];
       stats.frameTimeHistory = [];
+      stats.algorithmSamples = [];
       stats.pathsComputed = 0;
       
       let pathsPerFrame = 1;
@@ -1256,14 +1352,17 @@
           const frameStart = performance.now();
           
           for (let p = 0; p < pathsPerFrame; p++) {
-            // Random start and end points from anywhere walkable
-            const start = getRandomWalkablePosition();
-            const end = getRandomWalkablePosition();
-            
-            const result = timedFindPath(start.x, start.y, end.x, end.y);
-            stats.pathTimes.push(result.time);
-            stats.pathsComputed++;
-          }
+          // Random start and end points from anywhere walkable
+          const start = getRandomWalkablePosition();
+          const end = getRandomWalkablePosition();
+
+          const result = useWorkerMode()
+            ? await requestPathAsync(start.x, start.y, end.x, end.y, algorithmMode)
+            : timedFindPath(start.x, start.y, end.x, end.y);
+          stats.pathTimes.push(result.time);
+          stats.pathsComputed++;
+          recordAlgorithmStats(result, start, end);
+        }
           
           const frameTime = performance.now() - frameStart;
           frameTimes.push(frameTime);
@@ -1299,6 +1398,7 @@
       log(`  Safe limit: ${safeLimit} paths/frame (within ${PATHFINDING_BUDGET_MS}ms budget)`);
       log(`  Hard limit: ~${pathsPerFrame} paths/frame (exceeds ${FRAME_BUDGET_MS}ms frame budget)`);
       log(`  Avg path time: ${avgPath.toFixed(3)}ms`);
+      summarizeAlgorithmStats('Stress Test');
       
       addResult(`Stress Test (${complexity})`, '-', stats.pathsComputed, avgPath, 
         Math.min(...stats.pathTimes), Math.max(...stats.pathTimes), safeLimit, 'complete');
@@ -1308,28 +1408,16 @@
       const complexity = document.getElementById('mapComplexity').value;
       const entityCount = parseInt(document.getElementById('entityCount').value);
       const pathsPerFrame = parseInt(document.getElementById('pathsPerFrame').value);
+      const algorithmMode = getAlgorithmMode();
       const useWorker = useWorkerMode();
       
       generateMap(complexity);
       
       // Initialize worker if using worker mode
-      if (useWorker && !pathWorker) {
-        initPathWorker();
-        // Wait for worker to be ready
-        await new Promise(resolve => {
-          const check = () => {
-            if (workerReady) resolve();
-            else setTimeout(check, 50);
-          };
-          check();
-        });
-        updateWorkerCells();
-      } else if (useWorker) {
-        updateWorkerCells();
-      }
+      await ensureWorkerReady();
       
       const modeLabel = useWorker ? '(Web Worker)' : '(Sync - blocks main thread)';
-      log(`Starting realtime simulation ${modeLabel}: ${entityCount} entities, ${pathsPerFrame} paths/frame...`);
+      log(`Starting realtime simulation ${modeLabel} (${algorithmMode}): ${entityCount} entities, ${pathsPerFrame} paths/frame...`);
       
       // Create entities at random walkable positions
       entities = [];
@@ -1342,6 +1430,7 @@
       stats.pathTimes = [];
       stats.frameTimes = [];
       stats.frameTimeHistory = [];
+      stats.algorithmSamples = [];
       stats.pathsComputed = 0;
       totalBlockedTime = 0;
       
@@ -1374,12 +1463,13 @@
             // Async worker mode - doesn't block
             ent.pathPending = true;
             pendingWorkerPaths++;
-            requestPathAsync(Math.floor(ent.x), Math.floor(ent.y), dest.x, dest.y)
+            requestPathAsync(Math.floor(ent.x), Math.floor(ent.y), dest.x, dest.y, algorithmMode)
               .then(result => {
                 stats.pathTimes.push(result.time);
                 stats.pathsComputed++;
                 pendingWorkerPaths--;
                 ent.pathPending = false;
+                recordAlgorithmStats(result, { x: Math.floor(ent.x), y: Math.floor(ent.y) }, dest);
                 
                 if (result.path.length > 0) {
                   ent.path = expandPath(result.path, ent.x, ent.y);
@@ -1395,6 +1485,7 @@
             
             stats.pathTimes.push(result.time);
             stats.pathsComputed++;
+            recordAlgorithmStats(result, { x: Math.floor(ent.x), y: Math.floor(ent.y) }, dest);
             pathsThisFrame++;
             
             if (result.path.length > 0) {
@@ -1461,6 +1552,7 @@
       stats.pathTimes = [];
       stats.frameTimes = [];
       stats.frameTimeHistory = [];
+      stats.algorithmSamples = [];
       stats.pathsComputed = 0;
       
       const mode = document.getElementById('testMode').value;
