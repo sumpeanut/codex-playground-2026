@@ -422,8 +422,21 @@
     let workerReady = false;
     let totalBlockedTime = 0;
     
-    function initPathWorker() {
-      pathWorker = new Worker('/public/pathfinding-worker.js');
+    async function resolveWorkerUrl() {
+      try {
+        const response = await fetch('/assets/pathfinding-worker.js', { method: 'HEAD', cache: 'no-store' });
+        if (response.ok) {
+          return '/assets/pathfinding-worker.js';
+        }
+      } catch (error) {
+        // Ignore and fall back to dev server path.
+      }
+      return '/src/pathfinding/worker.ts';
+    }
+
+    async function initPathWorker() {
+      const workerUrl = await resolveWorkerUrl();
+      pathWorker = new Worker(workerUrl, { type: 'module' });
       
       pathWorker.onmessage = function(e) {
         const { type, data } = e.data;
@@ -1203,7 +1216,7 @@
     async function ensureWorkerReady() {
       if (!useWorkerMode()) return;
       if (!pathWorker) {
-        initPathWorker();
+        await initPathWorker();
       }
       await new Promise(resolve => {
         const check = () => {

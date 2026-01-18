@@ -6,5 +6,10 @@ export default defineConfig({
   assetsInclude: ["**/*.wgsl"],
   worker: {
     format: "es",
+    rollupOptions: {
+      output: {
+        entryFileNames: "assets/pathfinding-worker.js",
+      },
+    },
   },
 });
