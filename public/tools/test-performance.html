@@ -1016,16 +1016,33 @@
       }
     }
 
-    const flowNeighbors = [
-      [-1, 0, 1],
-      [1, 0, 1],
-      [0, -1, 1],
-      [0, 1, 1],
-      [-1, -1, Math.SQRT2],
-      [1, -1, Math.SQRT2],
-      [-1, 1, Math.SQRT2],
-      [1, 1, Math.SQRT2],
-    ];
+    const flowMoves = (() => {
+      const moves = [];
+      const walkDirs = [
+        [-1, 0],
+        [1, 0],
+        [0, -1],
+        [0, 1],
+        [-1, -1],
+        [1, -1],
+        [-1, 1],
+        [1, 1],
+      ];
+      for (const [dx, dy] of walkDirs) {
+        moves.push([dx, dy, getTraversalCost(0, 0, dx, dy)]);
+      }
+      for (let jumpY = 2; jumpY <= MAX_JUMP_UP; jumpY++) {
+        for (let jumpX = -MAX_JUMP_ACROSS; jumpX <= MAX_JUMP_ACROSS; jumpX++) {
+          moves.push([jumpX, -jumpY, getTraversalCost(0, 0, jumpX, -jumpY)]);
+        }
+      }
+      for (let fallY = 2; fallY <= GRID_H; fallY++) {
+        for (let fallX = -MAX_JUMP_ACROSS; fallX <= MAX_JUMP_ACROSS; fallX++) {
+          moves.push([fallX, fallY, getTraversalCost(0, 0, fallX, fallY)]);
+        }
+      }
+      return moves;
+    })();
 
     function buildFlowField(goalX, goalY) {
       const costs = new Float32Array(GRID_W * GRID_H);
@@ -1057,11 +1074,11 @@
         const cx = current.key % GRID_W;
         const cy = Math.floor(current.key / GRID_W);
 
-        for (const [dx, dy, stepCost] of flowNeighbors) {
-          const nx = cx + dx;
-          const ny = cy + dy;
+        for (const [dx, dy, stepCost] of flowMoves) {
+          const nx = cx - dx;
+          const ny = cy - dy;
           if (nx < 0 || nx >= GRID_W || ny < 0 || ny >= GRID_H) continue;
-          if (!isWalkable(nx, ny)) continue;
+          if (!canTraverse(nx, ny, cx, cy)) continue;
           const nk = ny * GRID_W + nx;
           const nextCost = current.cost + stepCost;
           if (nextCost < costs[nk]) {
@@ -1082,13 +1099,13 @@
           let bestCost = costs[key];
           let bestDx = 0;
           let bestDy = 0;
-          for (const [dx, dy] of flowNeighbors) {
+          for (const [dx, dy, stepCost] of flowMoves) {
             const nx = x + dx;
             const ny = y + dy;
             if (nx < 0 || nx >= GRID_W || ny < 0 || ny >= GRID_H) continue;
-            if (!isWalkable(nx, ny)) continue;
+            if (!canTraverse(x, y, nx, ny)) continue;
             const nk = ny * GRID_W + nx;
-            const neighborCost = costs[nk];
+            const neighborCost = costs[nk] + stepCost;
             if (neighborCost < bestCost) {
               bestCost = neighborCost;
               bestDx = dx;
@@ -1540,15 +1557,19 @@
       totalBlockedTime = 0;
       let flow = null;
       let flowGoal = null;
+      let flowFramesSinceBuild = 0;
 
-      if (algorithm === 'flow') {
+      function rebuildFlowField() {
         flowGoal = getRandomWalkablePosition();
         const buildStart = performance.now();
         flow = buildFlowField(flowGoal.x, flowGoal.y);
         const buildTime = performance.now() - buildStart;
-        stats.pathTimes.push(buildTime);
-        stats.pathsComputed = 1;
+        flowFramesSinceBuild = 0;
         log(`Flow field built for shared goal (${flowGoal.x}, ${flowGoal.y}) in ${buildTime.toFixed(3)}ms.`);
+      }
+
+      if (algorithm === 'flow') {
+        rebuildFlowField();
       }
       
       let lastTime = performance.now();
@@ -1564,11 +1585,16 @@
         
         // Update entities
         if (algorithm === 'flow' && flow) {
+          flowFramesSinceBuild += 1;
           const lookupStart = performance.now();
+          let reachedGoal = 0;
           for (const ent of entities) {
             const cx = Math.floor(ent.x);
             const cy = Math.floor(ent.y);
             if (cx < 0 || cx >= GRID_W || cy < 0 || cy >= GRID_H) continue;
+            if (flowGoal && Math.abs(cx - flowGoal.x) <= 1 && Math.abs(cy - flowGoal.y) <= 1) {
+              reachedGoal += 1;
+            }
             const key = cy * GRID_W + cx;
             const dx = flow.vectors[key * 2];
             const dy = flow.vectors[key * 2 + 1];
@@ -1579,6 +1605,10 @@
           const lookupTime = performance.now() - lookupStart;
           stats.pathTimes.push(lookupTime / Math.max(1, entities.length));
           stats.pathsComputed += entities.length;
+
+          if (flowGoal && (reachedGoal >= Math.ceil(entities.length * 0.7) || flowFramesSinceBuild > 600)) {
+            rebuildFlowField();
+          }
         } else {
           for (const ent of entities) {
             ent.update();
