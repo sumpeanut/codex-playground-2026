@@ -266,6 +266,17 @@ export async function initRenderer({
     }
   });
 
+  ui.benchmarkPathfinding?.addEventListener("click", () => {
+    const run = () => {
+      entitySystem.startBenchmark({ agentCount: 600, frameSamples: 240 });
+    };
+    if (quadState.lastBuiltFrame < 0) {
+      requestGpuReadback().then(run);
+    } else {
+      run();
+    }
+  });
+
   function writeParams() {
     const p = new Uint32Array(paramsU32);
     p[0] = gridW;
@@ -293,6 +304,7 @@ export async function initRenderer({
   }
 
   function frame() {
+    const frameStart = performance.now();
     state.frame++;
     if ((ui.showQuadTree.checked || entitySystem.entities.length > 0) && state.frame - quadState.lastBuiltFrame > 10) {
       requestGpuReadback();
@@ -346,6 +358,9 @@ export async function initRenderer({
 
     entitySystem.updateEntities();
     entitySystem.drawEntities(overlayCtx);
+
+    const frameMs = performance.now() - frameStart;
+    entitySystem.recordFrameTime(frameMs);
 
     requestAnimationFrame(frame);
   }

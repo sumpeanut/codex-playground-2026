@@ -1,7 +1,29 @@
+import { createFlowField } from "../pathfinding/flow_field.ts";
+
 export function createEntitySystem({ gridW, gridH, overlay, ui, pathfinder, requestPathAsync, isWorkerReady }) {
   const entities = [];
   let selectedEntity = null;
   let entityIdCounter = 0;
+
+  const flowField = createFlowField({
+    gridW,
+    gridH,
+    isWalkable: pathfinder.isWalkable,
+    findNearestWalkable: pathfinder.findNearestWalkable,
+  });
+
+  const benchmark = {
+    active: false,
+    mode: "astar",
+    frames: 0,
+    frameSamples: 240,
+    totalFrameMs: 0,
+    totalUpdateMs: 0,
+    totalPerEntityMs: 0,
+    targetX: 0,
+    targetY: 0,
+    agentCount: 0,
+  };
 
   function updateEntityCountUI() {
     if (ui.entityCount) ui.entityCount.textContent = entities.length;
@@ -72,8 +94,21 @@ export function createEntitySystem({ gridW, gridH, overlay, ui, pathfinder, requ
   const MAX_FALL_SPEED = 1.5;
   const JUMP_INITIAL_SPEED = 0.4;
 
-  function updateEntities() {
+  function updatePathEntities({ benchmarkMode = false } = {}) {
     for (const entity of entities) {
+      if (benchmarkMode && entity.path.length === 0) {
+        const path = pathfinder.findPath(
+          Math.floor(entity.x),
+          Math.floor(entity.y),
+          benchmark.targetX,
+          benchmark.targetY
+        );
+        if (path.length > 0) {
+          entity.path = expandPath(path, entity.x, entity.y);
+          entity.moveProgress = 0;
+        }
+      }
+
       if (entity.path.length === 0) {
         entity.fallVelocity = 0;
         entity.currentSpeed = entity.baseSpeed;
@@ -110,6 +145,43 @@ export function createEntitySystem({ gridW, gridH, overlay, ui, pathfinder, requ
           entity.x = next.x;
           entity.y = next.y;
         }
+      }
+    }
+  }
+
+  function updateFlowFieldEntities() {
+    for (const entity of entities) {
+      const cellX = Math.floor(entity.x);
+      const cellY = Math.floor(entity.y);
+      const { dx, dy } = flowField.getVector(cellX, cellY);
+      if (dx === 0 && dy === 0) {
+        continue;
+      }
+      entity.x = Math.max(0, Math.min(gridW - 1, entity.x + dx * entity.baseSpeed));
+      entity.y = Math.max(0, Math.min(gridH - 1, entity.y + dy * entity.baseSpeed));
+    }
+  }
+
+  function updateEntities() {
+    const updateStart = performance.now();
+
+    if (benchmark.active) {
+      if (benchmark.mode === "flow") {
+        updateFlowFieldEntities();
+      } else {
+        updatePathEntities({ benchmarkMode: true });
+      }
+    } else {
+      updatePathEntities();
+    }
+
+    const updateMs = performance.now() - updateStart;
+    if (benchmark.active) {
+      benchmark.totalUpdateMs += updateMs;
+      benchmark.totalPerEntityMs += updateMs / Math.max(1, entities.length);
+      benchmark.frames += 1;
+      if (benchmark.frames >= benchmark.frameSamples) {
+        finalizeBenchmarkPhase();
       }
     }
   }
@@ -217,6 +289,7 @@ export function createEntitySystem({ gridW, gridH, overlay, ui, pathfinder, requ
 
   function startRandomWalking() {
     setInterval(() => {
+      if (benchmark.active) return;
       for (const entity of entities) {
         if (entity.path.length === 0 && isWorkerReady()) {
           const destX = Math.floor(Math.random() * gridW);
@@ -244,6 +317,80 @@ export function createEntitySystem({ gridW, gridH, overlay, ui, pathfinder, requ
     updateEntityCountUI();
   }
 
+  function startBenchmark({ agentCount = 400, frameSamples = 240 } = {}) {
+    const centerX = Math.floor(gridW / 2);
+    const centerY = Math.floor(gridH / 2);
+    const target = pathfinder.findNearestWalkable(centerX, centerY) ?? { x: centerX, y: centerY };
+    benchmark.targetX = target.x;
+    benchmark.targetY = target.y;
+    benchmark.frameSamples = frameSamples;
+    benchmark.agentCount = agentCount;
+
+    setupBenchmarkPhase("astar");
+  }
+
+  function setupBenchmarkPhase(mode) {
+    benchmark.active = true;
+    benchmark.mode = mode;
+    benchmark.frames = 0;
+    benchmark.totalFrameMs = 0;
+    benchmark.totalUpdateMs = 0;
+    benchmark.totalPerEntityMs = 0;
+
+    reset();
+    for (let i = 0; i < benchmark.agentCount; i++) {
+      const entity = spawnEntityOnSurface();
+      if (!entity) break;
+    }
+
+    if (mode === "astar") {
+      for (const entity of entities) {
+        const path = pathfinder.findPath(
+          Math.floor(entity.x),
+          Math.floor(entity.y),
+          benchmark.targetX,
+          benchmark.targetY
+        );
+        if (path.length > 0) {
+          entity.path = expandPath(path, entity.x, entity.y);
+          entity.moveProgress = 0;
+        }
+      }
+    } else {
+      flowField.build(benchmark.targetX, benchmark.targetY);
+    }
+
+    console.log(
+      `[Benchmark] Starting ${mode === "astar" ? "A* baseline" : "flow field"} with ${entities.length} agents toward (${benchmark.targetX}, ${benchmark.targetY}).`
+    );
+  }
+
+  function finalizeBenchmarkPhase() {
+    const avgFrameMs = benchmark.totalFrameMs / Math.max(1, benchmark.frames);
+    const avgUpdateMs = benchmark.totalUpdateMs / Math.max(1, benchmark.frames);
+    const avgPerEntityMs = benchmark.totalPerEntityMs / Math.max(1, benchmark.frames);
+
+    console.log(`[Benchmark] ${benchmark.mode === "astar" ? "A* baseline" : "flow field"} results`, {
+      agents: entities.length,
+      frames: benchmark.frames,
+      avgFrameMs: Number(avgFrameMs.toFixed(3)),
+      avgUpdateMs: Number(avgUpdateMs.toFixed(3)),
+      avgPerEntityUpdateMs: Number(avgPerEntityMs.toFixed(5)),
+    });
+
+    if (benchmark.mode === "astar") {
+      setupBenchmarkPhase("flow");
+      return;
+    }
+
+    benchmark.active = false;
+  }
+
+  function recordFrameTime(frameMs) {
+    if (!benchmark.active) return;
+    benchmark.totalFrameMs += frameMs;
+  }
+
   updateEntityCountUI();
 
   return {
@@ -254,5 +401,7 @@ export function createEntitySystem({ gridW, gridH, overlay, ui, pathfinder, requ
     updateEntities,
     drawEntities,
     reset,
+    startBenchmark,
+    recordFrameTime,
   };
 }

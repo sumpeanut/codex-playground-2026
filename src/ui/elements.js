@@ -31,6 +31,7 @@ export function getUiElements() {
     structureData: document.getElementById("structureData"),
     showQuadTree: document.getElementById("showQuadTree"),
     spawnEntity: document.getElementById("spawnEntity"),
+    benchmarkPathfinding: document.getElementById("benchmarkPathfinding"),
     entityCount: document.getElementById("entityCount"),
   };
 }
