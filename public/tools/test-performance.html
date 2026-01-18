@@ -230,6 +230,16 @@
         <div class="stat-label">Main Thread Blocked</div>
         <div class="stat-value"><span id="statBlocked">0</span><span class="stat-unit">ms</span></div>
       </div>
+      <div class="stat-card">
+        <div class="stat-label">Cache Hit Rate</div>
+        <div class="stat-value" id="statCacheHit">-</div>
+        <div class="stat-unit" id="statCacheDetail"></div>
+      </div>
+      <div class="stat-card">
+        <div class="stat-label">Cache Size</div>
+        <div class="stat-value" id="statCacheEntries">-</div>
+        <div class="stat-unit" id="statCacheMemory"></div>
+      </div>
     </div>
     
     <div class="controls">
@@ -269,6 +279,14 @@
           <option value="sync">Synchronous (blocks main thread)</option>
           <option value="worker">Web Worker (async)</option>
         </select>
+      </div>
+
+      <div class="control-group">
+        <label>Path Cache</label>
+        <label style="display: flex; align-items: center; gap: 6px;">
+          <input type="checkbox" id="pathCacheEnabled" checked>
+          Enable caching
+        </label>
       </div>
       
       <div class="control-group" style="justify-content: flex-end;">
@@ -407,9 +425,31 @@
     // ---- Web Worker for async pathfinding ----
     let pathWorker = null;
     let pathRequestId = 0;
-    const pendingPathRequests = new Map();
+    const pendingGroupedRequests = new Map();
+    const pendingRequestKeys = new Map();
+    const queuedRequests = [];
     let workerReady = false;
     let totalBlockedTime = 0;
+    let flushScheduled = false;
+    const cache = new Map();
+    let cachePointCount = 0;
+    const cacheMetrics = {
+      cacheEnabled: true,
+      cacheHits: 0,
+      cacheMisses: 0,
+      cacheBypass: 0,
+      totalRequests: 0,
+      resolvedTotal: 0,
+      resolvedFromCache: 0,
+      resolvedFromWorker: 0,
+      workerRequests: 0,
+      batchCount: 0,
+    };
+    const resolveEvents = [];
+    const workerResolveEvents = [];
+    const throughputWindowMs = 2000;
+    const quantizeSize = 2;
+    const bytesPerPoint = 16;
     
     function initPathWorker() {
       pathWorker = new Worker('/src/pathfinding/worker.js', { type: 'module' });
@@ -424,11 +464,12 @@
             break;
             
           case 'pathResult':
-            const { requestId, path } = data;
-            const pending = pendingPathRequests.get(requestId);
-            if (pending) {
-              pending.resolve({ path, time: performance.now() - pending.startTime });
-              pendingPathRequests.delete(requestId);
+            handlePathResult(data.requestId, data.path);
+            break;
+
+          case 'pathResultBatch':
+            for (const result of data.results) {
+              handlePathResult(result.requestId, result.path);
             }
             break;
         }
@@ -452,6 +493,7 @@
           data: { cells: cpuCells.buffer.slice(0) }
         });
       }
+      clearCache();
     }
     
     function requestPathAsync(startX, startY, endX, endY) {
@@ -461,19 +503,144 @@
           return;
         }
         
+        cacheMetrics.totalRequests++;
+        const request = { startX, startY, endX, endY };
+        const key = makeCacheKey(request);
+        if (cacheMetrics.cacheEnabled) {
+          const cached = cache.get(key);
+          if (cached) {
+            cacheMetrics.cacheHits++;
+            recordResolutions(1, true);
+            resolve({ path: cached, time: 0 });
+            return;
+          }
+          cacheMetrics.cacheMisses++;
+        } else {
+          cacheMetrics.cacheBypass++;
+        }
+
+        const existingGroup = pendingGroupedRequests.get(key);
+        if (existingGroup) {
+          existingGroup.resolvers.push({ resolve, startTime: performance.now() });
+          return;
+        }
+
         const requestId = pathRequestId++;
-        const startTime = performance.now();
-        pendingPathRequests.set(requestId, { resolve, startTime });
-        
-        pathWorker.postMessage({
-          type: 'findPath',
-          data: { requestId, startX, startY, endX, endY }
+        pendingGroupedRequests.set(key, {
+          requestId,
+          request,
+          resolvers: [{ resolve, startTime: performance.now() }],
         });
+        pendingRequestKeys.set(requestId, key);
+        queuedRequests.push({ requestId, request });
+        scheduleFlush();
       });
     }
     
     function useWorkerMode() {
       return document.getElementById('pathfindingMode').value === 'worker';
+    }
+
+    function quantize(value) {
+      return Math.round(value / quantizeSize) * quantizeSize;
+    }
+
+    function makeCacheKey(request) {
+      const startX = quantize(request.startX);
+      const startY = quantize(request.startY);
+      const endX = quantize(request.endX);
+      const endY = quantize(request.endY);
+      return `${startX},${startY}:${endX},${endY}`;
+    }
+
+    function clearCache() {
+      cache.clear();
+      cachePointCount = 0;
+    }
+
+    function setCacheEntry(key, path) {
+      if (cache.has(key)) return;
+      cache.set(key, path);
+      cachePointCount += path.length;
+    }
+
+    function pruneThroughputSamples() {
+      const cutoff = performance.now() - throughputWindowMs;
+      while (resolveEvents.length && resolveEvents[0] < cutoff) resolveEvents.shift();
+      while (workerResolveEvents.length && workerResolveEvents[0] < cutoff) workerResolveEvents.shift();
+    }
+
+    function recordResolutions(count, fromCache) {
+      cacheMetrics.resolvedTotal += count;
+      if (fromCache) {
+        cacheMetrics.resolvedFromCache += count;
+      } else {
+        cacheMetrics.resolvedFromWorker += count;
+      }
+      const now = performance.now();
+      for (let i = 0; i < count; i++) resolveEvents.push(now);
+      if (!fromCache) {
+        for (let i = 0; i < count; i++) workerResolveEvents.push(now);
+      }
+    }
+
+    function scheduleFlush() {
+      if (flushScheduled) return;
+      flushScheduled = true;
+      requestAnimationFrame(() => {
+        flushScheduled = false;
+        flushQueue();
+      });
+    }
+
+    function flushQueue() {
+      if (!pathWorker || !workerReady || queuedRequests.length === 0) return;
+      const batch = queuedRequests.splice(0, queuedRequests.length);
+      cacheMetrics.workerRequests += batch.length;
+      cacheMetrics.batchCount += 1;
+      pathWorker.postMessage({
+        type: 'findPathBatch',
+        data: {
+          requests: batch.map(({ requestId, request }) => ({ requestId, ...request })),
+        },
+      });
+    }
+
+    function handlePathResult(requestId, path) {
+      const key = pendingRequestKeys.get(requestId);
+      if (!key) return;
+      const group = pendingGroupedRequests.get(key);
+      if (!group) return;
+      if (cacheMetrics.cacheEnabled) {
+        setCacheEntry(key, path);
+      }
+      for (const resolver of group.resolvers) {
+        resolver.resolve({ path, time: performance.now() - resolver.startTime });
+      }
+      recordResolutions(group.resolvers.length, false);
+      pendingGroupedRequests.delete(key);
+      pendingRequestKeys.delete(requestId);
+    }
+
+    function getCacheMetrics() {
+      pruneThroughputSamples();
+      const hitTotal = cacheMetrics.cacheHits + cacheMetrics.cacheMisses;
+      const totalThroughput = resolveEvents.length / (throughputWindowMs / 1000);
+      const workerThroughput = workerResolveEvents.length / (throughputWindowMs / 1000);
+      return {
+        cacheEnabled: cacheMetrics.cacheEnabled,
+        cacheEntries: cache.size,
+        cachePoints: cachePointCount,
+        cacheBytes: cachePointCount * bytesPerPoint,
+        cacheHits: cacheMetrics.cacheHits,
+        cacheMisses: cacheMetrics.cacheMisses,
+        cacheBypass: cacheMetrics.cacheBypass,
+        hitRate: hitTotal > 0 ? cacheMetrics.cacheHits / hitTotal : 0,
+        workerRequests: cacheMetrics.workerRequests,
+        batchCount: cacheMetrics.batchCount,
+        totalThroughput,
+        workerThroughput,
+      };
     }
     
     // ---- Logging ----
@@ -488,6 +655,12 @@
     function clearLog() {
       logText = '';
       logEl.textContent = '';
+    }
+
+    function formatBytes(bytes) {
+      if (bytes < 1024) return `${Math.round(bytes)} B`;
+      if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
+      return `${(bytes / (1024 * 1024)).toFixed(2)} MB`;
     }
     
     // ---- Cell Helpers ----
@@ -1133,6 +1306,23 @@
       const blockedEl = document.getElementById('statBlocked');
       blockedEl.textContent = totalBlockedTime.toFixed(1);
       blockedEl.className = totalBlockedTime < 10 ? 'stat-good' : (totalBlockedTime < 100 ? 'stat-warn' : 'stat-bad');
+
+      const cacheStats = getCacheMetrics();
+      const cacheHitEl = document.getElementById('statCacheHit');
+      const cacheDetailEl = document.getElementById('statCacheDetail');
+      const cacheEntriesEl = document.getElementById('statCacheEntries');
+      const cacheMemoryEl = document.getElementById('statCacheMemory');
+      if (!cacheStats.cacheEnabled) {
+        cacheHitEl.textContent = 'Off';
+        cacheDetailEl.textContent = 'Caching disabled';
+        cacheEntriesEl.textContent = '-';
+        cacheMemoryEl.textContent = '-';
+      } else {
+        cacheHitEl.textContent = `${(cacheStats.hitRate * 100).toFixed(1)}%`;
+        cacheDetailEl.textContent = `${cacheStats.cacheHits} hits / ${cacheStats.cacheMisses} misses · ${cacheStats.totalThroughput.toFixed(1)} paths/s (${cacheStats.workerThroughput.toFixed(1)} worker)`;
+        cacheEntriesEl.textContent = `${cacheStats.cacheEntries}`;
+        cacheMemoryEl.textContent = `${formatBytes(cacheStats.cacheBytes)} · ${cacheStats.cachePoints} pts`;
+      }
     }
     
     // ---- Test Modes ----
@@ -1501,6 +1691,17 @@
     }
     
     document.getElementById('stopTest').addEventListener('click', stopTest);
+    
+    const cacheToggle = document.getElementById('pathCacheEnabled');
+    cacheMetrics.cacheEnabled = cacheToggle.checked;
+    cacheToggle.addEventListener('change', (event) => {
+      if (!(event.target instanceof HTMLInputElement)) return;
+      cacheMetrics.cacheEnabled = event.target.checked;
+      if (!cacheMetrics.cacheEnabled) {
+        clearCache();
+      }
+      updateStats();
+    });
     
     async function runCaSuite() {
       if (caTestState.status === 'running') return;
